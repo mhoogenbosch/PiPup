@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.*
 import com.bumptech.glide.Glide
@@ -168,8 +169,11 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     }
 
     private class Web(context: Context, popup: PopupProps, val media: PopupProps.Media.Web): PopupView(context, popup) {
+        private var mWebView: WebView? = null
+
         init { create() }
 
+        @SuppressLint("SetJavaScriptEnabled")
         override fun create() {
             super.create()
 
@@ -178,9 +182,15 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 with(settings) {
                     loadWithOverviewMode = true
                     useWideViewPort = true
+                    // camera/stream pages (go2rtc, HA) need JS and unattended playback
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    mediaPlaybackRequiresUserGesture = false
+                    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 }
                 loadUrl(media.uri)
             }
+            mWebView = webView
 
             val layoutParams = FrameLayout.LayoutParams(
                 media.width,
@@ -190,6 +200,16 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             }
 
             frame.addView(webView, layoutParams)
+        }
+
+        override fun destroy() {
+            try {
+                mWebView?.apply {
+                    loadUrl("about:blank")
+                    destroy()
+                }
+                mWebView = null
+            } catch(e: Throwable) {}
         }
     }
 

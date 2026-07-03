@@ -6,6 +6,6 @@ import com.fasterxml.jackson.module.kotlin.KotlinModule
 
 object Json : ObjectMapper(JsonFactory()) {
     init {
-        registerModule(KotlinModule())
+        registerModule(KotlinModule.Builder().build())
     }
 }

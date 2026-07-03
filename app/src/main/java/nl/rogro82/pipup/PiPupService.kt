@@ -3,27 +3,32 @@ package nl.rogro82.pipup
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
-import android.support.v4.app.NotificationCompat
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoHTTPD.newFixedLengthResponse
 import java.io.File
 
 
 class PiPupService : Service(), WebServer.Handler {
-    private val mHandler: Handler = Handler()
+    private val mHandler: Handler = Handler(Looper.getMainLooper())
     private var mOverlay: FrameLayout? = null
     private var mPopup: PopupView? = null
+    private var mCurrentProps: PopupProps? = null
+    private var mShownAt: Long = 0L
     private lateinit var mWebServer: WebServer
 
     override fun onCreate() {
@@ -31,9 +36,13 @@ class PiPupService : Service(), WebServer.Handler {
 
         initNotificationChannel("service_channel", "Service channel", "Service channel")
 
+        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_IMMUTABLE
+        } else 0
+
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java), 0
+            Intent(this, MainActivity::class.java), pendingIntentFlags
         )
 
         val mBuilder = NotificationCompat.Builder(this, "service_channel")
@@ -45,7 +54,11 @@ class PiPupService : Service(), WebServer.Handler {
             .setAutoCancel(false)
             .setOngoing(true)
 
-        startForeground(ONGOING_NOTIFICATION_ID, mBuilder.build())
+        val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else 0
+
+        ServiceCompat.startForeground(this, ONGOING_NOTIFICATION_ID, mBuilder.build(), serviceType)
 
         mWebServer = WebServer(SERVER_PORT, this).apply {
             start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
@@ -60,9 +73,7 @@ class PiPupService : Service(), WebServer.Handler {
         mWebServer.stop()
     }
 
-    override fun onBind(intent: Intent): IBinder {
-        TODO("Return the communication channel to the service.")
-    }
+    override fun onBind(intent: Intent): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return START_STICKY
@@ -84,6 +95,9 @@ class PiPupService : Service(), WebServer.Handler {
 
         mHandler.removeCallbacksAndMessages(null)
 
+        mCurrentProps = null
+        mShownAt = 0L
+
         mPopup = mPopup?.let {
             it.destroy()
             null
@@ -101,11 +115,35 @@ class PiPupService : Service(), WebServer.Handler {
         }
     }
 
+    private fun scheduleRemoval(popup: PopupProps) {
+        // duration <= 0 means: show until /cancel or until replaced
+        if (!popup.indefinite) {
+            mHandler.postDelayed({
+                removePopup(true)
+            }, (popup.duration * 1000).toLong())
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun createPopup(popup: PopupProps) {
         try {
 
             Log.d(LOG_TAG, "Create popup: $popup")
+
+            // update-in-place: same id and same content -> keep the view (and its
+            // video/web stream) alive and only reschedule the removal timer
+
+            val current = mCurrentProps
+            if (mPopup != null && current?.id != null &&
+                current.id == popup.id && current.sameContent(popup)) {
+
+                Log.d(LOG_TAG, "Popup ${popup.id} unchanged: rescheduling removal only")
+
+                mHandler.removeCallbacksAndMessages(null)
+                mCurrentProps = popup
+                scheduleRemoval(popup)
+                return
+            }
 
             // remove current popup
 
@@ -158,28 +196,66 @@ class PiPupService : Service(), WebServer.Handler {
                 })
             }
 
+            mCurrentProps = popup
+            mShownAt = SystemClock.elapsedRealtime()
+
             // schedule removal
 
-            mHandler.postDelayed({
-                removePopup(true)
-            }, (popup.duration * 1000).toLong())
+            scheduleRemoval(popup)
 
         } catch (ex: Throwable) {
             ex.printStackTrace()
         }
     }
 
+    private fun stateResponse(): NanoHTTPD.Response {
+        val current = mCurrentProps
+        val state = mutableMapOf<String, Any?>(
+            "app" to "PiPup",
+            "version" to BuildConfig.VERSION_NAME,
+            "visible" to (current != null)
+        )
+        if (current != null) {
+            state["popup"] = mapOf(
+                "id" to current.id,
+                "duration" to current.duration,
+                "indefinite" to current.indefinite,
+                "elapsed" to ((SystemClock.elapsedRealtime() - mShownAt) / 1000)
+            )
+        }
+        return newFixedLengthResponse(
+            NanoHTTPD.Response.Status.OK,
+            APPLICATION_JSON,
+            Json.writeValueAsString(state)
+        )
+    }
+
     override fun handleHttpRequest(session: NanoHTTPD.IHTTPSession?): NanoHTTPD.Response {
         return session?.let {
             when(session.method) {
+                NanoHTTPD.Method.GET -> {
+                    when(session.uri) {
+                        "/state" -> stateResponse()
+                        else -> InvalidRequest("unknown uri: ${session.uri}")
+                    }
+                }
                 NanoHTTPD.Method.POST -> {
 
                     when(session.uri) {
+                        "/state" -> stateResponse()
                         "/cancel" -> {
-                            mHandler.post {
-                                removePopup(true)
+                            // optional ?id=<popup id>: only cancel when it matches the visible popup
+                            val id = session.parameters["id"]?.firstOrNull()
+                            val current = mCurrentProps
+
+                            if (id != null && current != null && current.id != id) {
+                                OK("id mismatch: visible popup is ${current.id}")
+                            } else {
+                                mHandler.post {
+                                    removePopup(true)
+                                }
+                                OK()
                             }
-                            OK()
                         }
                         "/notify" -> {
                             try {
@@ -192,7 +268,12 @@ class PiPupService : Service(), WebServer.Handler {
                                         val contentLength = session.headers["content-length"]?.toInt() ?: 0
                                         val content = ByteArray(contentLength)
 
-                                        session.inputStream.read(content, 0, contentLength)
+                                        var read = 0
+                                        while (read < contentLength) {
+                                            val res = session.inputStream.read(content, read, contentLength - read)
+                                            if (res < 0) break
+                                            read += res
+                                        }
 
                                         Json.readValue(content, PopupProps::class.java)
                                             ?: throw Exception("failed to parse input")
@@ -226,10 +307,10 @@ class PiPupService : Service(), WebServer.Handler {
                                         val message = params["message"]
 
                                         val messageSize = params["messageSize"]?.toFloatOrNull()
-                                            ?: PopupProps.DEFAULT_TITLE_SIZE
+                                            ?: PopupProps.DEFAULT_MESSAGE_SIZE
 
                                         val messageColor = params["messageColor"]
-                                            ?: PopupProps.DEFAULT_TITLE_COLOR
+                                            ?: PopupProps.DEFAULT_MESSAGE_COLOR
 
                                         val media = when(val image = files["image"]) {
                                             is String -> {
@@ -245,6 +326,7 @@ class PiPupService : Service(), WebServer.Handler {
 
                                         PopupProps(
                                             duration = duration,
+                                            id = params["id"],
                                             position = position,
                                             backgroundColor =  backgroundColor,
                                             title = title,
@@ -269,7 +351,7 @@ class PiPupService : Service(), WebServer.Handler {
 
 
                             } catch (ex: Throwable) {
-                                Log.e(LOG_TAG, ex.message)
+                                Log.e(LOG_TAG, ex.message ?: "unknown error")
                                 InvalidRequest(ex.message)
                             }
                         }

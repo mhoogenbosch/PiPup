@@ -1,36 +1,66 @@
 apply plugin: 'com.android.application'
-
 apply plugin: 'kotlin-android'
 
-apply plugin: 'kotlin-android-extensions'
-
 android {
-    compileSdkVersion 28
+    namespace 'nl.rogro82.pipup'
+    compileSdk 35
+
     defaultConfig {
         applicationId "nl.rogro82.pipup"
         minSdkVersion 24
-        targetSdkVersion 28
-        versionCode 6
-        versionName "0.1.5-beta"
+        targetSdkVersion 34
+        versionCode 7
+        versionName "0.2.0"
+    }
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        buildConfig true
+    }
+    // Consistent signing across CI builds so devices can update in place.
+    // Provide a keystore via environment (see .github/workflows/build.yml);
+    // release falls back to unsigned when no keystore is configured.
+    signingConfigs {
+        release {
+            if (System.getenv("KEYSTORE_FILE")) {
+                storeFile file(System.getenv("KEYSTORE_FILE"))
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (System.getenv("KEYSTORE_FILE")) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation"org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
-    implementation 'com.android.support:leanback-v17:28.0.0'
-    implementation 'com.android.support:appcompat-v7:28.0.0'
-    implementation 'com.github.bumptech.glide:glide:3.8.0'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.2'
 
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.9.+'
-    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin:2.9.+'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.leanback:leanback:1.0.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2'
 
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
-    implementation 'com.android.support.constraint:constraint-layout:1.1.3'
 }

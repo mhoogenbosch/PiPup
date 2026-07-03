@@ -1,20 +1,30 @@
 package nl.rogro82.pipup
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PopupProps(
-    val duration: Int = DEFAULT_DURATION,
+    val duration: Int = DEFAULT_DURATION, // seconds; 0 or negative = show until /cancel or replaced
+    val id: String? = null,               // optional identifier: re-notify with the same id and content only reschedules the timer (no view rebuild), /cancel?id= cancels selectively
     val position: Position = DEFAULT_POSITION,
     val backgroundColor: String = DEFAULT_BACKGROUND_COLOR,
     val title: String? = null,
-    val titleSize: Float = 14f,
+    val titleSize: Float = DEFAULT_TITLE_SIZE,
     val titleColor: String = DEFAULT_TITLE_COLOR,
     val message: String? = null,
     val messageSize: Float = DEFAULT_MESSAGE_SIZE,
     val messageColor: String = DEFAULT_MESSAGE_COLOR,
     val media: Media? = null
 ) {
+    val indefinite: Boolean
+        get() = duration <= 0
+
+    /// equal except for duration: safe to keep the existing view and only reschedule removal
+    fun sameContent(other: PopupProps): Boolean =
+        copy(duration = 0) == other.copy(duration = 0)
+
     @JsonTypeInfo(
         use = JsonTypeInfo.Id.NAME,
         include = JsonTypeInfo.As.WRAPPER_OBJECT)
@@ -24,8 +34,11 @@ data class PopupProps(
         JsonSubTypes.Type(Media.Web::class, name = "web")
     )
     sealed class Media {
+        @JsonIgnoreProperties(ignoreUnknown = true)
         data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
+        @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
+        @JsonIgnoreProperties(ignoreUnknown = true)
         data class Web(val uri: String, val width: Int = 640, val height: Int = 480): Media()
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }

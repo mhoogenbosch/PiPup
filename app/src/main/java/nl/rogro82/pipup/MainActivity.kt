@@ -30,7 +30,7 @@ class MainActivity : Activity() {
 
         // start service in foreground
 
-        val textViewConnection = findViewById<TextView>(R.id.textViewServerAddress)
+        val textViewConnection = findViewById<TextView>(R.id.textViewConnection)
         val textViewServerAddress = findViewById<TextView>(R.id.textViewServerAddress)
 
         when(val ipAddress = getIpAddress()) {
