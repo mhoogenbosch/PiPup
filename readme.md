@@ -151,11 +151,19 @@ Returns the current state as JSON:
 ```json
 {
   "app": "PiPup",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "visible": true,
+  "screenOn": true,
+  "popupsShown": 12,
+  "uptime": 86400,
+  "device": { "model": "AFTKA", "manufacturer": "Amazon", "android": "9" },
   "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 }
 }
 ```
+
+Since v0.2.3 `/state` also reports whether the screen is on/interactive (`screenOn`), the number of
+popups shown since the service started (`popupsShown`), the service uptime in seconds and basic
+device info — all surfaced as entities by the Home Assistant integration.
 
 ## Building
 
