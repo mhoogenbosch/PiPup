@@ -1,54 +1,54 @@
-# PiPup (fork)
+# PiPup
 
-PiPup is an application that allows displaying user-defined custom notifications on Android TV.
+Enhanced notifications for Android TV / Fire TV — show popups (text, images, video or live camera
+streams) on your TV from your home-automation system, for **as long as you want**.
 
-The most common use-case for this application is for sending notifications, from a home-automation solution, to your Android TV.
+> **Credits:** PiPup was originally created by [Rob Groenendijk (rogro82)](https://github.com/rogro82/PiPup).
+> This repository is a maintained fork of that project — all credit for the original idea and
+> implementation goes to him. The fork modernizes the build (AndroidX, AGP 8, Kotlin 2, targetSdk 34)
+> and adds the features below, aimed at Home Assistant use.
 
-> **This is a fork of [rogro82/PiPup](https://github.com/rogro82/PiPup)** with a modernized build
-> (AndroidX, AGP 8, Kotlin 2, targetSdk 34) and additional features aimed at Home Assistant use:
->
-> - **Indefinite popups** — `duration: 0` (or negative) shows a popup until it is cancelled or replaced,
->   e.g. show a camera stream for as long as there is motion.
-> - **Popup `id` + update-in-place** — re-sending a notify with the same `id` and content only reschedules
->   the removal timer without rebuilding the view, so a video/web stream keeps playing without flicker.
-> - **`/state` endpoint** — query whether a popup is currently visible (used by the
->   [pipup Home Assistant integration](https://github.com/mhoogenbosch/ha-pipup)).
-> - **`/cancel` documented** (existed upstream but undocumented) with optional selective `?id=`.
-> - WebView media now supports JavaScript, DOM storage and unattended (autoplay) media playback,
->   and cleartext (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
+![](graphics/screenshot-1.png)
 
-![](https://github.com/rogro82/PiPup/raw/master/graphics/screenshot-1.png)
+## What this fork adds
 
-__Some example scenarios:__
+- **Indefinite popups** — `duration: 0` (or negative) shows a popup until it is cancelled or replaced,
+  e.g. show a camera stream for exactly as long as there is motion.
+- **Popup `id` + update-in-place** — re-sending a notify with the same `id` and content only reschedules
+  the removal timer without rebuilding the view, so a video/web stream keeps playing without flicker.
+- **`/state` endpoint** — query whether a popup is currently visible.
+- **`/cancel`** (existed upstream but undocumented) with optional selective `?id=`.
+- WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
+  (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
+- Assorted fixes (request-body handling, message size/color defaults, WebView cleanup).
 
-- Show your camera stream on your TV for as long as there is motion
-- Display a notification with the video of your camera when someone is at your door
-- Send a notification when your dryer/washingmachine is ready
-- Anything else you might find useful
+**Home Assistant users:** there is a companion integration —
+[mhoogenbosch/ha-pipup](https://github.com/mhoogenbosch/ha-pipup) — with a config flow per TV,
+a popup binary sensor and `pipup.show` / `pipup.dismiss` actions (including camera entities).
 
-#### Sideloading:
+## Installation (sideloading)
 
 Download the APK from the [releases](../../releases) page and install it with adb.
 If you have the original Play Store version installed you need to uninstall that first
 (different signature, same application id).
-
-On Android TV (8.0+), when sideloading, you will need to set the permission for SYSTEM_ALERT_WINDOW manually (using adb) as there is no interface on Android TV to do this.
 
 ```
 adb install -r PiPup.apk
 adb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow
 ```
 
-_Important: after installation / updating it is adviced to restart your TV and open the application once to make sure the background-service is running_
+The second command grants the overlay permission, which has no settings UI on Android TV.
+
+_After installation or updating, open the application once (or reboot the TV) to make sure the
+background service is running._
 
 ## Integrating
 
-PiPup uses an embedded webserver (NanoHTTPD) which runs on port 7979.
+PiPup runs an embedded webserver (NanoHTTPD) on port **7979**.
 
 ### Sending notifications
 
-#### To send notifications with an external media resource (image, url or webview) use application/json
-
+#### JSON (external media: image, video or webview)
 
 | Property      | Value            |
 | ------------- | ---------------- |
@@ -56,7 +56,7 @@ PiPup uses an embedded webserver (NanoHTTPD) which runs on port 7979.
 | Method:       | POST             |
 | Content-Type: | application/json |
 
-Example json data:
+Example:
 
 ```json
 {
@@ -71,11 +71,12 @@ Example json data:
   "messageSize": 14,
   "backgroundColor": "#ffffff",
   "media": { "image": {
-    "uri": "https://mir-s3-cdn-cf.behance.net/project_modules/max_1200/cfcc3137009463.5731d08bd66a1.png", "width": 480
+    "uri": "https://your.host/image.png", "width": 480
   }}
 }
 ```
-All fields are optional and for `media` you can specify 3 types:
+
+All fields are optional. For `media` you can specify 3 types:
 
 ```json 
 { "image": { "uri": "address_to_your_image", "width": 480 }}
@@ -83,14 +84,13 @@ All fields are optional and for `media` you can specify 3 types:
 { "web":   { "uri": "address_to_your_resource", "width": 640, "height": 480 }}
 ```
 
-**Fork additions:**
+- `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
+  is called or a new popup replaces it.
+- `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical
+  content only reschedules the removal timer — the view (and a playing video/web stream) is kept as-is.
+  Different content (or no `id`) rebuilds the popup as before.
 
-- `duration`: `0` or negative shows the popup **indefinitely**, until `/cancel` is called or a new popup replaces it.
-- `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical content
-  only reschedules the removal timer — the view (and a playing video/web stream) is kept as-is.
-  Sending different content (or no `id`) rebuilds the popup as before.
-
-#### To send notifications with an image file use multipart/form-data
+#### multipart/form-data (uploaded image file)
 
 | Property      | Value               |
 | ------------- | ------------------- |
@@ -115,7 +115,7 @@ Form-fields:
 | image           | File                                         |
 | imageWidth      | Integer (default=480)                        |
 
-`position` is an enum ranging from 0 to 4
+`position` is an enum ranging from 0 to 4:
 
 |  | Position    |
 | -----: | ----------- |
@@ -125,7 +125,7 @@ Form-fields:
 | 3     | BottomLeft  |
 | 4     | Center      |
 
-Color-properties are in `[AA]RRGGBB` where the alpha channel is optional e.g. #FFFFFF or #CCFFFFFF
+Color-properties are in `[AA]RRGGBB` where the alpha channel is optional, e.g. #FFFFFF or #CCFFFFFF.
 
 ### Cancelling a popup
 
@@ -134,10 +134,10 @@ Color-properties are in `[AA]RRGGBB` where the alpha channel is optional e.g. #F
 | Path:         | /cancel          |
 | Method:       | POST             |
 
-Removes the currently visible popup (if any). Optionally pass `?id=<popup id>` to only cancel
-when the visible popup has that id — e.g. `POST /cancel?id=doorbell`. If the visible popup has a
-different id the call is a no-op (HTTP 200 with an explanatory message), so a delayed "hide camera"
-automation cannot accidentally cancel a newer, unrelated popup.
+Removes the currently visible popup (if any). Optionally pass `?id=<popup id>` to only cancel when
+the visible popup has that id — e.g. `POST /cancel?id=doorbell`. If the visible popup has a different
+id the call is a no-op (HTTP 200 with an explanatory message), so a delayed "hide camera" automation
+cannot accidentally cancel a newer, unrelated popup.
 
 ### State
 
@@ -151,7 +151,7 @@ Returns the current state as JSON:
 ```json
 {
   "app": "PiPup",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "visible": true,
   "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 }
 }
@@ -159,5 +159,5 @@ Returns the current state as JSON:
 
 ## Building
 
-CI builds an APK on every push (see `.github/workflows/build.yml`). Locally: JDK 17 +
-Android SDK 35, then `./gradlew assembleDebug`.
+CI builds an APK on every push (see `.github/workflows/build.yml`); tagged releases get the APK
+attached automatically. Locally: JDK 17 + Android SDK 35, then `./gradlew assembleDebug`.
