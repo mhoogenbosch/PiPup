@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
@@ -29,6 +30,8 @@ class PiPupService : Service(), WebServer.Handler {
     private var mPopup: PopupView? = null
     private var mCurrentProps: PopupProps? = null
     private var mShownAt: Long = 0L
+    private var mPopupsShown: Long = 0L
+    private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
 
     override fun onCreate() {
@@ -198,6 +201,7 @@ class PiPupService : Service(), WebServer.Handler {
 
             mCurrentProps = popup
             mShownAt = SystemClock.elapsedRealtime()
+            mPopupsShown++
 
             // schedule removal
 
@@ -210,10 +214,19 @@ class PiPupService : Service(), WebServer.Handler {
 
     private fun stateResponse(): NanoHTTPD.Response {
         val current = mCurrentProps
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         val state = mutableMapOf<String, Any?>(
             "app" to "PiPup",
             "version" to BuildConfig.VERSION_NAME,
-            "visible" to (current != null)
+            "visible" to (current != null),
+            "screenOn" to powerManager.isInteractive,
+            "popupsShown" to mPopupsShown,
+            "uptime" to (SystemClock.elapsedRealtime() - mStartedAt) / 1000,
+            "device" to mapOf(
+                "model" to Build.MODEL,
+                "manufacturer" to Build.MANUFACTURER,
+                "android" to Build.VERSION.RELEASE
+            )
         )
         if (current != null) {
             state["popup"] = mapOf(
