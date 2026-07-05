@@ -80,9 +80,13 @@ All fields are optional. For `media` you can specify 3 types:
 
 ```json 
 { "image": { "uri": "address_to_your_image", "width": 480 }}
-{ "video": { "uri": "address_to_your_video", "width": 480 }}
-{ "web":   { "uri": "address_to_your_resource", "width": 640, "height": 480 }}
+{ "video": { "uri": "address_to_your_video", "width": 480, "muted": true }}
+{ "web":   { "uri": "address_to_your_resource", "width": 640, "height": 480, "muted": true }}
 ```
+
+`muted` (since 0.2.4, default `false`): plays the video/web media without audio. For web media every
+(also dynamically added) `<video>`/`<audio>` element on the page is muted, so the page never claims
+audio focus — audio in a popup can freeze video playback on some Android TV / Fire TV devices.
 
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.

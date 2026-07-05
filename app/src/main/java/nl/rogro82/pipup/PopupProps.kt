@@ -35,11 +35,11 @@ data class PopupProps(
     )
     sealed class Media {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
+        data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH, val muted: Boolean = false): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
-        data class Web(val uri: String, val width: Int = 640, val height: Int = 480): Media()
+        data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false): Media()
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }
 

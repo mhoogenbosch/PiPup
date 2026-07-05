@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.*
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
@@ -81,6 +82,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             mVideoView = VideoView(context).apply {
                 setVideoURI(Uri.parse(media.uri))
                 setOnPreparedListener {
+                    if (media.muted) {
+                        it.setVolume(0f, 0f)
+                    }
                     it.setOnVideoSizeChangedListener { _, _, _ ->
 
                         // resize video and show popup view
@@ -188,6 +192,16 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 }
+                if (media.muted) {
+                    // mute every (also dynamically added) media element, so the
+                    // page never claims audio focus (audio can stall video on
+                    // some Android TV / Fire TV devices)
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            view?.evaluateJavascript(MUTE_JS, null)
+                        }
+                    }
+                }
                 loadUrl(media.uri)
             }
             mWebView = webView
@@ -215,6 +229,19 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
     companion object {
         const val LOG_TAG = "PopupView"
+
+        const val MUTE_JS = """
+            (function() {
+                function muteAll() {
+                    document.querySelectorAll('video,audio').forEach(function(m) {
+                        m.muted = true;
+                        m.volume = 0;
+                    });
+                }
+                muteAll();
+                new MutationObserver(muteAll).observe(document.documentElement, { childList: true, subtree: true });
+            })();
+        """
 
         fun build(context: Context, popup: PopupProps): PopupView
         {
