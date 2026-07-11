@@ -43,6 +43,9 @@ class PiPupService : Service(), WebServer.Handler {
     private var mNsdManager: NsdManager? = null
     private var mNsdListener: NsdManager.RegistrationListener? = null
 
+    private val mWatchdogHandler = Handler(Looper.getMainLooper())
+    private var mWatchdogCleanups: Long = 0L
+
     private var mTts: TextToSpeech? = null
     private var mTtsReady = false
     private var mTtsPending: Pair<String, String?>? = null
@@ -85,10 +88,13 @@ class PiPupService : Service(), WebServer.Handler {
 
         registerNsd()
         initTts()
+        startWatchdog()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+
+        mWatchdogHandler.removeCallbacksAndMessages(null)
 
         unregisterNsd()
 
@@ -213,21 +219,58 @@ class PiPupService : Service(), WebServer.Handler {
         mCurrentProps = null
         mShownAt = 0L
 
-        mPopup = mPopup?.let {
-            it.destroy()
-            null
-        }
+        // every step guarded: a throwing WebView/VideoView teardown or WindowManager call
+        // used to abort the removal halfway, leaving the popup visible on screen while the
+        // state already said it was gone (the "popup stays on TV" reports)
 
-        mOverlay?.apply {
-
-            removeAllViews()
-            if (removeOverlay) {
-                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                wm.removeViewImmediate(mOverlay)
-
-                mOverlay = null
+        mPopup?.let {
+            try {
+                it.destroy()
+            } catch (ex: Throwable) {
+                Log.e(LOG_TAG, "Popup destroy failed: ${ex.message}")
             }
         }
+        mPopup = null
+
+        mOverlay?.let { overlay ->
+            try {
+                overlay.removeAllViews()
+            } catch (ex: Throwable) {
+                Log.e(LOG_TAG, "Overlay removeAllViews failed: ${ex.message}")
+            }
+            if (removeOverlay) {
+                try {
+                    val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    wm.removeViewImmediate(overlay)
+                    mOverlay = null
+                } catch (ex: IllegalArgumentException) {
+                    mOverlay = null // already detached
+                } catch (ex: Throwable) {
+                    // keep the reference: the watchdog retries the removal
+                    Log.e(LOG_TAG, "Overlay removal failed (watchdog will retry): ${ex.message}")
+                }
+            }
+        }
+    }
+
+    /// consistency watchdog: no active popup should ever leave an overlay behind.
+    /// NB: runs on its own handler — mHandler gets removeCallbacksAndMessages(null) on
+    /// every removePopup, which would silently kill a watchdog scheduled there.
+    private fun startWatchdog() {
+        mWatchdogHandler.postDelayed(object : Runnable {
+            override fun run() {
+                try {
+                    if (mCurrentProps == null && (mOverlay != null || mPopup != null)) {
+                        Log.w(LOG_TAG, "Watchdog: stale overlay without active popup, force removing")
+                        mWatchdogCleanups++
+                        removePopup(true)
+                    }
+                } catch (ex: Throwable) {
+                    Log.e(LOG_TAG, "Watchdog error: ${ex.message}")
+                }
+                mWatchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
+            }
+        }, WATCHDOG_INTERVAL_MS)
     }
 
     private fun scheduleRemoval(popup: PopupProps) {
@@ -343,6 +386,7 @@ class PiPupService : Service(), WebServer.Handler {
             "visible" to (current != null),
             "screenOn" to powerManager.isInteractive,
             "popupsShown" to mPopupsShown,
+            "watchdogCleanups" to mWatchdogCleanups,
             "uptime" to (SystemClock.elapsedRealtime() - mStartedAt) / 1000,
             "device" to mapOf(
                 "model" to Build.MODEL,
@@ -506,6 +550,7 @@ class PiPupService : Service(), WebServer.Handler {
         const val NSD_SERVICE_TYPE = "_pipup._tcp."
         const val PREFS_NAME = "pipup"
         const val PREF_DEVICE_ID = "device_id"
+        const val WATCHDOG_INTERVAL_MS = 30_000L
         const val ONGOING_NOTIFICATION_ID = 123
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"

@@ -26,6 +26,9 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **mDNS/zeroconf discovery** (since 0.2.5) — the app advertises `_pipup._tcp` with a stable device
   id, so clients (like the Home Assistant integration) find TVs automatically and follow them across
   DHCP address changes.
+- **Overlay watchdog** (since 0.2.6) — popup removal is guarded step-by-step and a 30s consistency
+  check force-removes any overlay left behind by a failed teardown, so a popup can no longer stay
+  on screen after its dismiss. `/state` reports `watchdogCleanups` so you can see if it ever fired.
 - WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
   (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
 - Assorted fixes (request-body handling, message size/color defaults, WebView cleanup).
