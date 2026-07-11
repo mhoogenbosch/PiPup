@@ -36,11 +36,27 @@ a popup binary sensor and `pipup.show` / `pipup.dismiss` actions (including came
 
 ## Installation (sideloading)
 
+### Prerequisite: enable ADB debugging on the TV
+
+Sideloading requires ADB over the network, which is off by default:
+
+- **Android TV / Google TV:** Settings → System → About → press **Build number 7 times**
+  (unlocks Developer options) → Settings → System → Developer options → enable
+  **USB debugging** (on recent Google TV also **Wireless debugging**).
+- **Fire TV:** Settings → My Fire TV → About → press the device name 7 times →
+  My Fire TV → Developer options → enable **ADB debugging**.
+
+Then connect from your computer with `adb connect <tv-ip>:5555` and accept the
+authorization prompt on the TV (once per computer).
+
+### Install
+
 Download the APK from the [releases](../../releases) page and install it with adb.
 If you have the original Play Store version installed you need to uninstall that first
 (different signature, same application id).
 
 ```
+adb connect <tv-ip>:5555
 adb install -r PiPup.apk
 adb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow
 ```
