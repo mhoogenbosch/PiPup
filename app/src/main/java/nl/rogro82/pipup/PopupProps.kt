@@ -16,14 +16,17 @@ data class PopupProps(
     val message: String? = null,
     val messageSize: Float = DEFAULT_MESSAGE_SIZE,
     val messageColor: String = DEFAULT_MESSAGE_COLOR,
-    val media: Media? = null
+    val media: Media? = null,
+    val tts: String? = null,              // optional text spoken on the device when the popup is (re)shown
+    val ttsLanguage: String? = null       // optional BCP-47 tag (e.g. "nl-NL"); device default when omitted
 ) {
     val indefinite: Boolean
         get() = duration <= 0
 
-    /// equal except for duration: safe to keep the existing view and only reschedule removal
+    /// equal except for duration and tts: safe to keep the existing view and only reschedule removal
     fun sameContent(other: PopupProps): Boolean =
-        copy(duration = 0) == other.copy(duration = 0)
+        copy(duration = 0, tts = null, ttsLanguage = null) ==
+                other.copy(duration = 0, tts = null, ttsLanguage = null)
 
     @JsonTypeInfo(
         use = JsonTypeInfo.Id.NAME,

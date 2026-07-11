@@ -6,12 +6,16 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.view.Gravity
 import android.view.ViewGroup
@@ -22,6 +26,8 @@ import androidx.core.app.ServiceCompat
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoHTTPD.newFixedLengthResponse
 import java.io.File
+import java.util.Locale
+import java.util.UUID
 
 
 class PiPupService : Service(), WebServer.Handler {
@@ -33,6 +39,14 @@ class PiPupService : Service(), WebServer.Handler {
     private var mPopupsShown: Long = 0L
     private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
+
+    private var mNsdManager: NsdManager? = null
+    private var mNsdListener: NsdManager.RegistrationListener? = null
+
+    private var mTts: TextToSpeech? = null
+    private var mTtsReady = false
+    private var mTtsPending: Pair<String, String?>? = null
+    private val mTtsDefaultLocale: Locale = Locale.getDefault()
 
     override fun onCreate() {
         super.onCreate()
@@ -68,12 +82,110 @@ class PiPupService : Service(), WebServer.Handler {
         }
 
         Log.d(LOG_TAG, "WebServer started")
+
+        registerNsd()
+        initTts()
     }
 
     override fun onDestroy() {
         super.onDestroy()
 
+        unregisterNsd()
+
+        mTts?.let {
+            it.stop()
+            it.shutdown()
+        }
+        mTts = null
+        mTtsReady = false
+
         mWebServer.stop()
+    }
+
+    /// stable device identifier: generated once, survives app updates (not reinstalls)
+    private fun deviceId(): String {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(PREF_DEVICE_ID, null) ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString(PREF_DEVICE_ID, it).apply()
+        }
+    }
+
+    private fun deviceName(): String = try {
+        Settings.Global.getString(contentResolver, "device_name")
+    } catch (_: Throwable) {
+        null
+    }?.takeIf { it.isNotBlank() } ?: Build.MODEL
+
+    private fun registerNsd() {
+        try {
+            val serviceInfo = NsdServiceInfo().apply {
+                serviceName = "PiPup ${deviceName()}".take(63)
+                serviceType = NSD_SERVICE_TYPE
+                port = SERVER_PORT
+                setAttribute("id", deviceId())
+                setAttribute("name", deviceName())
+                setAttribute("version", BuildConfig.VERSION_NAME)
+            }
+            val listener = object : NsdManager.RegistrationListener {
+                override fun onServiceRegistered(info: NsdServiceInfo) {
+                    Log.d(LOG_TAG, "NSD registered as ${info.serviceName}")
+                }
+                override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
+                    Log.e(LOG_TAG, "NSD registration failed: $errorCode")
+                }
+                override fun onServiceUnregistered(info: NsdServiceInfo) {}
+                override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {}
+            }
+            mNsdListener = listener
+            mNsdManager = (getSystemService(Context.NSD_SERVICE) as NsdManager).also {
+                it.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+            }
+        } catch (ex: Throwable) {
+            // discovery is best-effort: the HTTP API works fine without it
+            Log.e(LOG_TAG, "NSD registration error: ${ex.message}")
+        }
+    }
+
+    private fun unregisterNsd() {
+        try {
+            mNsdListener?.let { mNsdManager?.unregisterService(it) }
+        } catch (_: Throwable) {
+        }
+        mNsdListener = null
+        mNsdManager = null
+    }
+
+    private fun initTts() {
+        try {
+            mTts = TextToSpeech(this) { status ->
+                mTtsReady = status == TextToSpeech.SUCCESS
+                if (!mTtsReady) {
+                    Log.e(LOG_TAG, "TTS init failed ($status)")
+                }
+                mTtsPending?.let { (text, language) ->
+                    mTtsPending = null
+                    if (mTtsReady) doSpeak(text, language)
+                }
+            }
+        } catch (ex: Throwable) {
+            Log.e(LOG_TAG, "TTS unavailable: ${ex.message}")
+        }
+    }
+
+    private fun speak(text: String, language: String?) {
+        if (mTtsReady) doSpeak(text, language)
+        else mTtsPending = text to language // engine still starting: keep the latest utterance
+    }
+
+    private fun doSpeak(text: String, language: String?) {
+        val tts = mTts ?: return
+        try {
+            val locale = language?.let { Locale.forLanguageTag(it) } ?: mTtsDefaultLocale
+            tts.language = locale // best-effort: engine falls back when the language is missing
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "pipup-tts")
+        } catch (ex: Throwable) {
+            Log.e(LOG_TAG, "TTS error: ${ex.message}")
+        }
     }
 
     override fun onBind(intent: Intent): IBinder? = null
@@ -143,6 +255,10 @@ class PiPupService : Service(), WebServer.Handler {
                 Log.d(LOG_TAG, "Popup ${popup.id} unchanged: rescheduling removal only")
 
                 mHandler.removeCallbacksAndMessages(null)
+                // still speak when the tts text changed (content comparison ignores tts)
+                if (!popup.tts.isNullOrBlank() && popup.tts != current.tts) {
+                    speak(popup.tts, popup.ttsLanguage)
+                }
                 mCurrentProps = popup
                 scheduleRemoval(popup)
                 return
@@ -203,6 +319,10 @@ class PiPupService : Service(), WebServer.Handler {
             mShownAt = SystemClock.elapsedRealtime()
             mPopupsShown++
 
+            if (!popup.tts.isNullOrBlank()) {
+                speak(popup.tts, popup.ttsLanguage)
+            }
+
             // schedule removal
 
             scheduleRemoval(popup)
@@ -218,6 +338,8 @@ class PiPupService : Service(), WebServer.Handler {
         val state = mutableMapOf<String, Any?>(
             "app" to "PiPup",
             "version" to BuildConfig.VERSION_NAME,
+            "id" to deviceId(),
+            "name" to deviceName(),
             "visible" to (current != null),
             "screenOn" to powerManager.isInteractive,
             "popupsShown" to mPopupsShown,
@@ -348,7 +470,9 @@ class PiPupService : Service(), WebServer.Handler {
                                             message = message,
                                             messageSize = messageSize,
                                             messageColor = messageColor,
-                                            media = media
+                                            media = media,
+                                            tts = params["tts"],
+                                            ttsLanguage = params["ttsLanguage"]
                                         )
                                     }
                                     else -> throw Exception("invalid content-type")
@@ -379,6 +503,9 @@ class PiPupService : Service(), WebServer.Handler {
     companion object {
         const val LOG_TAG = "PiPupService"
         const val SERVER_PORT = 7979
+        const val NSD_SERVICE_TYPE = "_pipup._tcp."
+        const val PREFS_NAME = "pipup"
+        const val PREF_DEVICE_ID = "device_id"
         const val ONGOING_NOTIFICATION_ID = 123
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"

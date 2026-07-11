@@ -10,14 +10,22 @@ streams) on your TV from your home-automation system, for **as long as you want*
 
 ![](graphics/screenshot-1.png)
 
-## What this fork adds
+## What this fork adds (compared to [rogro82/PiPup](https://github.com/rogro82/PiPup))
 
 - **Indefinite popups** — `duration: 0` (or negative) shows a popup until it is cancelled or replaced,
   e.g. show a camera stream for exactly as long as there is motion.
 - **Popup `id` + update-in-place** — re-sending a notify with the same `id` and content only reschedules
   the removal timer without rebuilding the view, so a video/web stream keeps playing without flicker.
-- **`/state` endpoint** — query whether a popup is currently visible.
+- **`/state` endpoint** — popup visibility, screen on/off (`screenOn`, since 0.2.3), popup counter,
+  uptime, device info and a **stable device id** (since 0.2.5).
 - **`/cancel`** (existed upstream but undocumented) with optional selective `?id=`.
+- **Muted media** (since 0.2.4) — `muted: true` on video/web media plays without audio, so a popup
+  never claims audio focus (audio in a popup can freeze video playback on some devices).
+- **Text-to-speech** (since 0.2.5) — a `tts` field speaks a text on the TV when the popup appears,
+  with optional `ttsLanguage` (BCP-47).
+- **mDNS/zeroconf discovery** (since 0.2.5) — the app advertises `_pipup._tcp` with a stable device
+  id, so clients (like the Home Assistant integration) find TVs automatically and follow them across
+  DHCP address changes.
 - WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
   (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
 - Assorted fixes (request-body handling, message size/color defaults, WebView cleanup).
@@ -88,6 +96,16 @@ All fields are optional. For `media` you can specify 3 types:
 (also dynamically added) `<video>`/`<audio>` element on the page is muted, so the page never claims
 audio focus — audio in a popup can freeze video playback on some Android TV / Fire TV devices.
 
+`tts` (since 0.2.5): a text that is spoken aloud on the TV when the popup appears, using the
+device's text-to-speech engine. Optional `ttsLanguage` takes a BCP-47 tag (e.g. `"nl-NL"`);
+the device's default locale is used when omitted. Re-sending the same popup `id` with unchanged
+content and unchanged `tts` does **not** repeat the speech (only the removal timer is extended);
+sending a different `tts` text speaks the new text.
+
+```json
+{ "title": "Doorbell", "tts": "Er staat iemand voor de deur", "ttsLanguage": "nl-NL" }
+```
+
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.
 - `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical
@@ -155,7 +173,9 @@ Returns the current state as JSON:
 ```json
 {
   "app": "PiPup",
-  "version": "0.2.3",
+  "version": "0.2.5",
+  "id": "6f1f9c1e-4a3f-4a44-9d2c-6f1f9c1e4a3f",
+  "name": "FireTV Veranda",
   "visible": true,
   "screenOn": true,
   "popupsShown": 12,
@@ -167,7 +187,13 @@ Returns the current state as JSON:
 
 Since v0.2.3 `/state` also reports whether the screen is on/interactive (`screenOn`), the number of
 popups shown since the service started (`popupsShown`), the service uptime in seconds and basic
-device info — all surfaced as entities by the Home Assistant integration.
+device info — all surfaced as entities by the Home Assistant integration. Since v0.2.5 it also
+reports a stable device `id` (generated once, survives app updates) and the device `name`.
+
+### Discovery
+
+Since v0.2.5 the app advertises itself over mDNS/zeroconf as `_pipup._tcp` (port 7979) with TXT
+records `id` (the stable device id), `name` and `version`, enabling automatic discovery.
 
 ## Building
 
