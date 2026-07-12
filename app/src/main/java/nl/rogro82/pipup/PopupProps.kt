@@ -18,7 +18,11 @@ data class PopupProps(
     val messageColor: String = DEFAULT_MESSAGE_COLOR,
     val media: Media? = null,
     val tts: String? = null,              // optional text spoken on the device when the popup is (re)shown
-    val ttsLanguage: String? = null       // optional BCP-47 tag (e.g. "nl-NL"); device default when omitted
+    val ttsLanguage: String? = null,      // optional BCP-47 tag (e.g. "nl-NL"); device default when omitted
+    val urgency: String? = null,          // info | warning | critical: colored border preset
+    val showProgress: Boolean = false,    // countdown bar for popups with a finite duration
+    val buttons: List<Button> = emptyList(), // DPAD-focusable buttons; pressing one POSTs to callback and dismisses
+    val callback: String? = null          // URL that receives {"popup","button","device"} on a button press
 ) {
     val indefinite: Boolean
         get() = duration <= 0
@@ -27,6 +31,9 @@ data class PopupProps(
     fun sameContent(other: PopupProps): Boolean =
         copy(duration = 0, tts = null, ttsLanguage = null) ==
                 other.copy(duration = 0, tts = null, ttsLanguage = null)
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class Button(val id: String, val label: String)
 
     @JsonTypeInfo(
         use = JsonTypeInfo.Id.NAME,

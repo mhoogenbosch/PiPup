@@ -1,14 +1,17 @@
 package nl.rogro82.pipup
 
+import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -20,6 +23,11 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 
 @SuppressLint("ViewConstructor")
 sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(context) {
+
+    /// set by the service after build(); invoked when the user presses a popup button
+    var onButton: ((PopupProps.Button) -> Unit)? = null
+
+    private var mProgressAnimator: ObjectAnimator? = null
 
     open fun create() {
         inflate(context, R.layout.popup,this)
@@ -58,10 +66,61 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             message.setTextColor(Color.parseColor(popup.messageColor))
         }
 
-        setBackgroundColor(Color.parseColor(popup.backgroundColor))
+        // background with optional urgency border preset
+        background = GradientDrawable().apply {
+            try {
+                setColor(Color.parseColor(popup.backgroundColor))
+            } catch (_: Throwable) {
+                setColor(Color.parseColor(PopupProps.DEFAULT_BACKGROUND_COLOR))
+            }
+            when (popup.urgency?.lowercase()) {
+                "info" -> { setStroke(4, Color.parseColor("#2196F3")); cornerRadius = 8f }
+                "warning" -> { setStroke(6, Color.parseColor("#FF9800")); cornerRadius = 8f }
+                "critical" -> { setStroke(8, Color.parseColor("#F44336")); cornerRadius = 8f }
+            }
+        }
+
+        // DPAD-focusable buttons (the service makes the overlay window focusable)
+        if (popup.buttons.isNotEmpty()) {
+            val row = LinearLayout(context).apply {
+                orientation = HORIZONTAL
+                gravity = Gravity.CENTER
+            }
+            popup.buttons.forEach { btn ->
+                row.addView(Button(context).apply {
+                    text = btn.label
+                    isFocusable = true
+                    setOnClickListener { onButton?.invoke(btn) }
+                }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(10, 10, 10, 0)
+                })
+            }
+            addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+
+        // countdown bar for finite durations
+        if (popup.showProgress && !popup.indefinite) {
+            val bar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = 1000
+            }
+            addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, 8).apply {
+                setMargins(0, 12, 0, 0)
+            })
+            mProgressAnimator = ObjectAnimator.ofInt(bar, "progress", 1000, 0).apply {
+                duration = popup.duration * 1000L
+                interpolator = LinearInterpolator()
+                start()
+            }
+        }
     }
 
-    open fun destroy() {}
+    open fun destroy() {
+        try {
+            mProgressAnimator?.cancel()
+        } catch (_: Throwable) {}
+        mProgressAnimator = null
+    }
 
     private class Default(context: Context, popup: PopupProps) : PopupView(context, popup) {
         init { create() }
@@ -104,6 +163,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         }
 
         override fun destroy() {
+            super.destroy()
             try {
                 if(mVideoView.isPlaying) {
                     mVideoView.stopPlayback()
@@ -165,6 +225,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         }
 
         override fun destroy() {
+            super.destroy()
             try {
                 mImageView?.setImageDrawable(null)
                 media.image.recycle()
@@ -217,6 +278,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         }
 
         override fun destroy() {
+            super.destroy()
             try {
                 mWebView?.apply {
                     loadUrl("about:blank")

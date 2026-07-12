@@ -18,6 +18,7 @@ import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -159,6 +160,37 @@ class PiPupService : Service(), WebServer.Handler {
         }
         mNsdListener = null
         mNsdManager = null
+    }
+
+    /// POST the pressed button to the callback URL (HA webhook), off the main thread
+    private fun sendButtonCallback(popup: PopupProps, button: PopupProps.Button) {
+        val url = popup.callback
+        if (url.isNullOrBlank()) {
+            Log.w(LOG_TAG, "Button ${button.id} pressed but no callback configured")
+            return
+        }
+        Thread {
+            try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                val body = Json.writeValueAsString(mapOf(
+                    "popup" to popup.id,
+                    "button" to button.id,
+                    "label" to button.label,
+                    "device" to deviceId(),
+                    "name" to deviceName()
+                ))
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                Log.d(LOG_TAG, "Button callback ${button.id} -> HTTP ${conn.responseCode}")
+                conn.disconnect()
+            } catch (ex: Throwable) {
+                Log.e(LOG_TAG, "Button callback failed: ${ex.message}")
+            }
+        }.start()
     }
 
     private fun initTts() {
@@ -311,28 +343,50 @@ class PiPupService : Service(), WebServer.Handler {
 
             removePopup()
 
-            // create or reuse the current overlay
+            // create or reuse the current overlay; the window is only focusable when the
+            // popup carries buttons (otherwise it must never steal the remote from the TV app)
+
+            val layoutFlags: Int = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else -> WindowManager.LayoutParams.TYPE_TOAST
+            }
+
+            val windowFlags = if (popup.buttons.isNotEmpty())
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            else
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                layoutFlags,
+                windowFlags,
+                PixelFormat.TRANSLUCENT
+            )
+
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
             mOverlay = when (val overlay = mOverlay) {
-                is FrameLayout -> overlay
-                else -> FrameLayout(this).apply {
+                is FrameLayout -> overlay.also {
+                    try {
+                        wm.updateViewLayout(it, params)
+                    } catch (ex: Throwable) {
+                        Log.e(LOG_TAG, "updateViewLayout failed: ${ex.message}")
+                    }
+                }
+                else -> object : FrameLayout(this@PiPupService) {
+                    // BACK dismisses a focusable (button) popup without firing a callback
+                    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                            mHandler.post { removePopup(true) }
+                            return true
+                        }
+                        return super.dispatchKeyEvent(event)
+                    }
+                }.apply {
 
                     setPadding(20, 20, 20, 20)
 
-                    val layoutFlags: Int = when {
-                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                        else -> WindowManager.LayoutParams.TYPE_TOAST
-                    }
-
-                    val params = WindowManager.LayoutParams(
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        layoutFlags,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                        PixelFormat.TRANSLUCENT
-                    )
-
-                    val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
                     wm.addView(this, params)
                 }
             }.also {
@@ -340,6 +394,11 @@ class PiPupService : Service(), WebServer.Handler {
                 // inflate the popup layout
 
                 mPopup = PopupView.build(this, popup)
+
+                mPopup?.onButton = { btn ->
+                    sendButtonCallback(popup, btn)
+                    mHandler.post { removePopup(true) }
+                }
 
                 it.addView(mPopup, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -356,6 +415,11 @@ class PiPupService : Service(), WebServer.Handler {
                         PopupProps.Position.Center -> Gravity.CENTER
                     }
                 })
+
+                if (popup.buttons.isNotEmpty()) {
+                    // focus the first button so a single OK press activates it
+                    mPopup?.requestFocus()
+                }
             }
 
             mCurrentProps = popup
