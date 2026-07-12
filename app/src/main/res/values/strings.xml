@@ -2,6 +2,8 @@
     <string name="app_name">PiPup</string>
     <string name="server_running">The server is running on:</string>
     <string name="server_address">%1$s:%2$d</string>
-    <string name="no_network_connection">No network connection!\nCheck you connection settings and try again.</string>
+    <string name="no_network_connection">No network connection!\nCheck your connection settings and try again.</string>
     <string name="more_information">For more information please read the documentation @ https://github.com/mhoogenbosch/PiPup</string>
+    <string name="service_channel_name">Service</string>
+    <string name="service_notification_text">Service running</string>
 </resources>

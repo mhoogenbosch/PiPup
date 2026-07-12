@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">PiPup</string>
+    <string name="server_running">De server draait op:</string>
+    <string name="no_network_connection">Geen netwerkverbinding!\nControleer je verbindingsinstellingen en probeer het opnieuw.</string>
+    <string name="more_information">Meer informatie vind je in de documentatie op https://github.com/mhoogenbosch/PiPup</string>
+    <string name="service_channel_name">Service</string>
+    <string name="service_notification_text">Service draait</string>
+</resources>

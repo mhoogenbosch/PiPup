@@ -55,7 +55,11 @@ class PiPupService : Service(), WebServer.Handler {
     override fun onCreate() {
         super.onCreate()
 
-        initNotificationChannel("service_channel", "Service channel", "Service channel")
+        initNotificationChannel(
+            "service_channel",
+            getString(R.string.service_channel_name),
+            getString(R.string.service_channel_name)
+        )
 
         val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_IMMUTABLE
@@ -67,8 +71,8 @@ class PiPupService : Service(), WebServer.Handler {
         )
 
         val mBuilder = NotificationCompat.Builder(this, "service_channel")
-            .setContentTitle("PiPup")
-            .setContentText("Service running")
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.service_notification_text))
             .setContentIntent(pendingIntent)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setCategory(Notification.CATEGORY_SERVICE)
