@@ -179,6 +179,8 @@ Form-fields:
 | backgroundColor | String (default=#CC000000, format=[AA]RRGGBB |
 | image           | File                                         |
 | imageWidth      | Integer (default=480)                        |
+| tts             | String (optional, spoken aloud, since 0.2.5) |
+| ttsLanguage     | String (optional BCP-47 tag, since 0.2.5)    |
 
 `position` is an enum ranging from 0 to 4:
 
@@ -216,12 +218,13 @@ Returns the current state as JSON:
 ```json
 {
   "app": "PiPup",
-  "version": "0.2.5",
+  "version": "0.3.1",
   "id": "6f1f9c1e-4a3f-4a44-9d2c-6f1f9c1e4a3f",
   "name": "FireTV Veranda",
   "visible": true,
   "screenOn": true,
   "popupsShown": 12,
+  "watchdogCleanups": 0,
   "uptime": 86400,
   "device": { "model": "AFTKA", "manufacturer": "Amazon", "android": "9" },
   "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 }
@@ -231,7 +234,8 @@ Returns the current state as JSON:
 Since v0.2.3 `/state` also reports whether the screen is on/interactive (`screenOn`), the number of
 popups shown since the service started (`popupsShown`), the service uptime in seconds and basic
 device info — all surfaced as entities by the Home Assistant integration. Since v0.2.5 it also
-reports a stable device `id` (generated once, survives app updates) and the device `name`.
+reports a stable device `id` (generated once, survives app updates) and the device `name`; since
+v0.2.6 `watchdogCleanups` counts how often the overlay watchdog had to force-remove a stale popup.
 
 ### Discovery
 
