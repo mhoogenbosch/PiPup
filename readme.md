@@ -29,6 +29,13 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **Overlay watchdog** (since 0.2.6) — popup removal is guarded step-by-step and a 30s consistency
   check force-removes any overlay left behind by a failed teardown, so a popup can no longer stay
   on screen after its dismiss. `/state` reports `watchdogCleanups` so you can see if it ever fired.
+- **Buttons on the popup** (since 0.3.0) — `buttons: [{id, label}]` renders remote-operable buttons:
+  the overlay only becomes focusable when buttons are present (it never steals the remote
+  otherwise), **OK** activates (POST `{popup, button, label, device, name}` to the `callback` URL
+  and dismiss), **BACK** dismisses without an action.
+- **Countdown bar** (since 0.3.0) — `showProgress: true` animates a progress bar over a finite duration.
+- **Urgency presets** (since 0.3.0) — `urgency: info|warning|critical` adds a blue/orange/red border.
+- **Localization** (since 0.3.1) — the app UI follows the device language (English/Dutch).
 - WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
   (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
 - Assorted fixes (request-body handling, message size/color defaults, WebView cleanup).
@@ -124,6 +131,23 @@ sending a different `tts` text speaks the new text.
 ```json
 { "title": "Doorbell", "tts": "Er staat iemand voor de deur", "ttsLanguage": "nl-NL" }
 ```
+
+Since 0.3.0 three more optional fields:
+
+```json
+{
+  "urgency": "critical",
+  "showProgress": true,
+  "buttons": [{ "id": "unlock", "label": "Open the door" }],
+  "callback": "http://your-ha:8123/api/webhook/pipup_buttons"
+}
+```
+
+`urgency` (`info`/`warning`/`critical`) adds a blue/orange/red border. `showProgress` animates a
+countdown bar over a finite `duration`. `buttons` (with a `callback` URL) renders remote-operable
+buttons: the overlay only takes input focus when buttons are present, **OK** activates the focused
+button — the app POSTs `{"popup", "button", "label", "device", "name"}` to the callback and
+dismisses — and **BACK** dismisses without an action.
 
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.
