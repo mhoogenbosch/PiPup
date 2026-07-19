@@ -53,12 +53,15 @@ data class PopupProps(
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }
 
-    enum class Position(index: Int) {
-        TopRight(0),
-        TopLeft(1),
-        BottomRight(2),
-        BottomLeft(3),
-        Center(4)
+    // NB: the multipart parser and the ha-pipup integration both map an integer
+    // position onto this enum by ORDINAL (values()[n]) — the declaration order is
+    // therefore a contract. Do not reorder; append new positions at the end only.
+    enum class Position {
+        TopRight,   // 0
+        TopLeft,    // 1
+        BottomRight, // 2
+        BottomLeft, // 3
+        Center      // 4
     }
 
     companion object {
