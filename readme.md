@@ -76,6 +76,22 @@ The second command grants the overlay permission, which has no settings UI on An
 _After installation or updating, open the application once (or reboot the TV) to make sure the
 background service is running._
 
+## Security
+
+PiPup runs an embedded webserver (NanoHTTPD) on port **7979** with **no authentication**,
+and a popup's `web` media is rendered in a WebView with JavaScript and DOM storage enabled.
+That means **any device on the same network can display arbitrary content — including
+JavaScript — on the TV.** This is by design (camera/stream pages need it), but it makes the
+trust boundary the network itself.
+
+- Run PiPup TVs on a **trusted network segment** (not a guest/IoT VLAN that untrusted devices share).
+- Traffic is plain HTTP (`usesCleartextTraffic`), so treat everything sent to the popup — URLs,
+  TTS text, button callbacks — as visible on the LAN.
+- Button presses POST to the `callback` URL supplied with the popup. If you drive security-sensitive
+  automations from button events (e.g. unlocking a door), have the caller include an unguessable,
+  single-use token in that callback URL and verify it on receipt — the
+  [ha-pipup integration](https://github.com/mhoogenbosch/ha-pipup) does this automatically.
+
 ## Integrating
 
 PiPup runs an embedded webserver (NanoHTTPD) on port **7979**.

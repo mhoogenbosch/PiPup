@@ -35,9 +35,12 @@ class PiPupService : Service(), WebServer.Handler {
     private val mHandler: Handler = Handler(Looper.getMainLooper())
     private var mOverlay: FrameLayout? = null
     private var mPopup: PopupView? = null
-    private var mCurrentProps: PopupProps? = null
-    private var mShownAt: Long = 0L
-    private var mPopupsShown: Long = 0L
+    // Written on the main thread, read by the NanoHTTPD worker thread in /state:
+    // @Volatile / atomics guarantee the HTTP reader sees a consistent, published
+    // value instead of a torn or stale one (the sensors HA polls feed off this).
+    @Volatile private var mCurrentProps: PopupProps? = null
+    @Volatile private var mShownAt: Long = 0L
+    private val mPopupsShown = java.util.concurrent.atomic.AtomicLong(0)
     private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
 
@@ -45,7 +48,7 @@ class PiPupService : Service(), WebServer.Handler {
     private var mNsdListener: NsdManager.RegistrationListener? = null
 
     private val mWatchdogHandler = Handler(Looper.getMainLooper())
-    private var mWatchdogCleanups: Long = 0L
+    private val mWatchdogCleanups = java.util.concurrent.atomic.AtomicLong(0)
 
     private var mTts: TextToSpeech? = null
     private var mTtsReady = false
@@ -298,7 +301,7 @@ class PiPupService : Service(), WebServer.Handler {
                 try {
                     if (mCurrentProps == null && (mOverlay != null || mPopup != null)) {
                         Log.w(LOG_TAG, "Watchdog: stale overlay without active popup, force removing")
-                        mWatchdogCleanups++
+                        mWatchdogCleanups.incrementAndGet()
                         removePopup(true)
                     }
                 } catch (ex: Throwable) {
@@ -400,7 +403,10 @@ class PiPupService : Service(), WebServer.Handler {
                 mPopup = PopupView.build(this, popup)
 
                 mPopup?.onButton = { btn ->
-                    sendButtonCallback(popup, btn)
+                    // Use the currently shown props, not this closure's `popup`:
+                    // an update-in-place reuses the view but can carry a new
+                    // callback URL, so the captured value would be stale.
+                    sendButtonCallback(mCurrentProps ?: popup, btn)
                     mHandler.post { removePopup(true) }
                 }
 
@@ -428,7 +434,7 @@ class PiPupService : Service(), WebServer.Handler {
 
             mCurrentProps = popup
             mShownAt = SystemClock.elapsedRealtime()
-            mPopupsShown++
+            mPopupsShown.incrementAndGet()
 
             if (!popup.tts.isNullOrBlank()) {
                 speak(popup.tts, popup.ttsLanguage)
@@ -453,8 +459,8 @@ class PiPupService : Service(), WebServer.Handler {
             "name" to deviceName(),
             "visible" to (current != null),
             "screenOn" to powerManager.isInteractive,
-            "popupsShown" to mPopupsShown,
-            "watchdogCleanups" to mWatchdogCleanups,
+            "popupsShown" to mPopupsShown.get(),
+            "watchdogCleanups" to mWatchdogCleanups.get(),
             "uptime" to (SystemClock.elapsedRealtime() - mStartedAt) / 1000,
             "device" to mapOf(
                 "model" to Build.MODEL,
@@ -510,16 +516,22 @@ class PiPupService : Service(), WebServer.Handler {
                                 val popup = when {
                                     contentType.startsWith(APPLICATION_JSON) -> {
 
-                                        // try to handle it as json
+                                        // read the body by Content-Length when present, else
+                                        // fall back to draining the stream (chunked transfer /
+                                        // clients that omit the header would otherwise parse as empty)
 
-                                        val contentLength = session.headers["content-length"]?.toInt() ?: 0
-                                        val content = ByteArray(contentLength)
-
-                                        var read = 0
-                                        while (read < contentLength) {
-                                            val res = session.inputStream.read(content, read, contentLength - read)
-                                            if (res < 0) break
-                                            read += res
+                                        val declaredLength = session.headers["content-length"]?.toIntOrNull()
+                                        val content = if (declaredLength != null && declaredLength >= 0) {
+                                            val buf = ByteArray(declaredLength)
+                                            var read = 0
+                                            while (read < declaredLength) {
+                                                val res = session.inputStream.read(buf, read, declaredLength - read)
+                                                if (res < 0) break
+                                                read += res
+                                            }
+                                            buf
+                                        } else {
+                                            session.inputStream.readBytes()
                                         }
 
                                         Json.readValue(content, PopupProps::class.java)
