@@ -36,6 +36,13 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **Countdown bar** (since 0.3.0) — `showProgress: true` animates a progress bar over a finite duration.
 - **Urgency presets** (since 0.3.0) — `urgency: info|warning|critical` adds a blue/orange/red border.
 - **Localization** (since 0.3.1) — the app UI follows the device language (English/Dutch).
+- **Lazy TTS engine** (since 0.4.0) — the speech engine is only bound when a popup actually carries
+  a `tts` field and is released again after 60s idle. On Google TV devices this keeps the separate
+  ~100MB `com.google.android.tts` process out of memory, which matters a lot on 1GB TVs where the
+  low-memory killer picks the heaviest processes.
+- **Resilient web server startup** (since 0.4.0) — binding port 7979 is retried (3 attempts, 500ms
+  apart) and a definitive failure stops the service for a clean restart, instead of leaving a live
+  process with a dead server behind.
 - WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
   (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
 - Assorted fixes (request-body handling, message size/color defaults, WebView cleanup).

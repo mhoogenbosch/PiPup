@@ -54,6 +54,7 @@ class PiPupService : Service(), WebServer.Handler {
     private var mTtsReady = false
     private var mTtsPending: Pair<String, String?>? = null
     private val mTtsDefaultLocale: Locale = Locale.getDefault()
+    private val mTtsIdleHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -88,32 +89,64 @@ class PiPupService : Service(), WebServer.Handler {
 
         ServiceCompat.startForeground(this, ONGOING_NOTIFICATION_ID, mBuilder.build(), serviceType)
 
-        mWebServer = WebServer(SERVER_PORT, this).apply {
-            start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+        // Binding :7979 can fail when the previous process was killed and its socket is not
+        // released yet (low-memory devices restart this service within seconds). An unguarded
+        // start() threw straight out of onCreate, leaving a live process with a dead server -
+        // which no external "is the process running?" check can tell apart from a healthy one.
+        mWebServer = WebServer(SERVER_PORT, this)
+        if (!startWebServer()) {
+            Log.e(LOG_TAG, "Giving up on port $SERVER_PORT; stopping for a clean restart")
+            stopSelf()
+            return
         }
 
-        Log.d(LOG_TAG, "WebServer started")
-
         registerNsd()
-        initTts()
         startWatchdog()
+        // TTS is initialised lazily: the engine is a separate ~100MB process and keeping it
+        // bound for the entire service lifetime is the single biggest reason this app gets
+        // picked by low-memory killers on 1GB TVs. Popups without `tts` never need it.
+    }
+
+    private fun startWebServer(): Boolean {
+        repeat(WEBSERVER_START_ATTEMPTS) { attempt ->
+            try {
+                mWebServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+                Log.d(LOG_TAG, "WebServer started on :$SERVER_PORT (attempt ${attempt + 1})")
+                return true
+            } catch (ex: Throwable) {
+                Log.e(LOG_TAG, "WebServer start attempt ${attempt + 1} failed: ${ex.message}")
+                try {
+                    mWebServer.stop()
+                } catch (_: Throwable) {
+                }
+                if (attempt < WEBSERVER_START_ATTEMPTS - 1) {
+                    try {
+                        Thread.sleep(WEBSERVER_RETRY_DELAY_MS)
+                    } catch (_: InterruptedException) {
+                        return false
+                    }
+                }
+            }
+        }
+        return false
     }
 
     override fun onDestroy() {
         super.onDestroy()
 
         mWatchdogHandler.removeCallbacksAndMessages(null)
+        mTtsIdleHandler.removeCallbacksAndMessages(null)
 
         unregisterNsd()
 
-        mTts?.let {
-            it.stop()
-            it.shutdown()
-        }
-        mTts = null
-        mTtsReady = false
+        shutdownTts()
 
-        mWebServer.stop()
+        try {
+            mWebServer.stop()
+        } catch (ex: Throwable) {
+            // never let teardown throw: onCreate may have bailed out before the server bound
+            Log.e(LOG_TAG, "WebServer stop failed: ${ex.message}")
+        }
     }
 
     /// stable device identifier: generated once, survives app updates (not reinstalls)
@@ -200,7 +233,9 @@ class PiPupService : Service(), WebServer.Handler {
         }.start()
     }
 
+    /// idempotent: only ever creates one engine, and only when something wants to speak
     private fun initTts() {
+        if (mTts != null) return
         try {
             mTts = TextToSpeech(this) { status ->
                 mTtsReady = status == TextToSpeech.SUCCESS
@@ -218,8 +253,29 @@ class PiPupService : Service(), WebServer.Handler {
     }
 
     private fun speak(text: String, language: String?) {
-        if (mTtsReady) doSpeak(text, language)
-        else mTtsPending = text to language // engine still starting: keep the latest utterance
+        mTtsIdleHandler.removeCallbacksAndMessages(null)
+        if (mTtsReady) {
+            doSpeak(text, language)
+        } else {
+            mTtsPending = text to language // engine still starting: keep the latest utterance
+            initTts()
+        }
+        // release the engine process again once nobody has spoken for a while
+        mTtsIdleHandler.postDelayed({ shutdownTts() }, TTS_IDLE_TIMEOUT_MS)
+    }
+
+    private fun shutdownTts() {
+        val engine = mTts ?: return
+        try {
+            engine.stop()
+            engine.shutdown()
+            Log.d(LOG_TAG, "TTS engine released")
+        } catch (ex: Throwable) {
+            Log.e(LOG_TAG, "TTS shutdown failed: ${ex.message}")
+        }
+        mTts = null
+        mTtsReady = false
+        mTtsPending = null
     }
 
     private fun doSpeak(text: String, language: String?) {
@@ -632,6 +688,9 @@ class PiPupService : Service(), WebServer.Handler {
         const val PREF_DEVICE_ID = "device_id"
         const val WATCHDOG_INTERVAL_MS = 30_000L
         const val ONGOING_NOTIFICATION_ID = 123
+        const val WEBSERVER_START_ATTEMPTS = 3
+        const val WEBSERVER_RETRY_DELAY_MS = 500L
+        const val TTS_IDLE_TIMEOUT_MS = 60_000L
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"
 
