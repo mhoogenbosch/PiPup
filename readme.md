@@ -81,7 +81,30 @@ adb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow
 The second command grants the overlay permission, which has no settings UI on Android TV.
 
 _After installation or updating, open the application once (or reboot the TV) to make sure the
-background service is running._
+background service is running._ Starting the service without bringing the app to the foreground
+(handy from an automation, it does not interrupt whatever is playing) also works:
+
+```
+adb shell am start-foreground-service -n nl.rogro82.pipup/.PiPupService
+```
+
+#### TCL Google TVs: allow auto-restart
+
+TCL ships an extra guard (`com.tcl.guard`) that forbids Android from automatically restarting a
+killed service unless the app holds the vendor-specific `APP_AUTO_START` app-op — it logs
+`forbid restart Servic ... callee_does't_have_OP_AUTO_START_permission` and the service never
+comes back after a low-memory kill. The on-screen menu ("Permission Guardian" → "Auto-start
+permission") keeps per-app entries locked while its "Automatic management" master switch is on,
+so grant the op over adb instead (note the internal name `android:auto_start`; the displayed
+name `APP_AUTO_START` is not accepted):
+
+```
+adb shell cmd appops set nl.rogro82.pipup android:auto_start allow
+```
+
+Like the overlay permission this resets on reinstall, so repeat it after every update. On brands
+without this op (Fire TV, Nokia, …) the command fails with `Unknown operation string` — that is
+fine, nothing needs granting there.
 
 ## Security
 
