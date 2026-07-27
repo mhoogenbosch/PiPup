@@ -18,11 +18,24 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.widget.TextView
+import com.fasterxml.jackson.databind.JsonNode
 import nl.rogro82.pipup.Utils.getIpAddress
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : Activity() {
+
+    private val mHandler = Handler(Looper.getMainLooper())
+    private val mRefresh = object : Runnable {
+        override fun run() {
+            refreshStatus()
+            mHandler.postDelayed(this, REFRESH_INTERVAL_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,5 +71,90 @@ class MainActivity : Activity() {
         } else {
             startService(serviceIntent)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        mHandler.post(mRefresh)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        mHandler.removeCallbacks(mRefresh)
+    }
+
+    /// Live status block below the server address. Fetched from the service's own
+    /// /state endpoint over loopback: it is the exact same JSON Home Assistant sees,
+    /// so what this screen shows is by definition what integrations get — no second
+    /// code path that can drift.
+    private fun refreshStatus() {
+        Thread {
+            val text = try {
+                val conn = URL("http://127.0.0.1:${PiPupService.SERVER_PORT}/state")
+                    .openConnection() as HttpURLConnection
+                conn.connectTimeout = 1000
+                conn.readTimeout = 1000
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                formatStatus(Json.readTree(body))
+            } catch (_: Throwable) {
+                getString(R.string.status_service_unreachable)
+            }
+            runOnUiThread {
+                findViewById<TextView>(R.id.textViewStatus)?.text = text
+            }
+        }.start()
+    }
+
+    private fun formatStatus(s: JsonNode): String {
+        val sb = StringBuilder()
+
+        sb.append("v").append(s.path("version").asText("?"))
+        sb.append("  •  popups: ").append(s.path("popupsShown").asLong(0))
+        sb.append("  •  up: ").append(formatDuration(s.path("uptime").asLong(0)))
+
+        val last = s.path("lastPopup")
+        if (last.isObject) {
+            sb.append("\n\n").append(getString(R.string.status_last_popup))
+                .append(" (").append(formatDuration(last.path("secondsAgo").asLong(0)))
+                .append(" ago)\n")
+
+            val parts = mutableListOf<String>()
+            last.path("id").takeIf { it.isTextual }?.let { parts.add("id=${it.asText()}") }
+            parts.add(last.path("position").asText("?"))
+            parts.add(
+                if (last.path("indefinite").asBoolean(false)) "∞"
+                else "${last.path("duration").asInt(0)}s"
+            )
+            val media = last.path("media")
+            if (media.isObject) {
+                val dims = if (media.has("height"))
+                    "${media.path("width").asInt()}×${media.path("height").asInt()}"
+                else "${media.path("width").asInt()}w"
+                parts.add("${media.path("type").asText()} $dims")
+                when (last.path("muted").asBoolean(false)) {
+                    true -> parts.add("muted")
+                    false -> if (!last.path("muted").isNull) parts.add("sound")
+                }
+            }
+            if (last.path("tts").asBoolean(false)) parts.add("tts")
+            last.path("buttons").asInt(0).takeIf { it > 0 }?.let { parts.add("$it btn") }
+
+            sb.append(parts.joinToString("  •  "))
+        } else {
+            sb.append("\n\n").append(getString(R.string.status_no_popups_yet))
+        }
+
+        return sb.toString()
+    }
+
+    private fun formatDuration(seconds: Long): String = when {
+        seconds < 60 -> "${seconds}s"
+        seconds < 3600 -> "${seconds / 60}m"
+        seconds < 86400 -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
+        else -> "${seconds / 86400}d ${(seconds % 86400) / 3600}h"
+    }
+
+    companion object {
+        const val REFRESH_INTERVAL_MS = 2000L
     }
 }

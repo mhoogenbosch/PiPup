@@ -40,6 +40,10 @@ class PiPupService : Service(), WebServer.Handler {
     // value instead of a torn or stale one (the sensors HA polls feed off this).
     @Volatile private var mCurrentProps: PopupProps? = null
     @Volatile private var mShownAt: Long = 0L
+    // Last *received* popup (survives dismiss/expiry) — shown on the status screen and
+    // in /state so you can verify at the TV what HA actually sent.
+    @Volatile private var mLastPopup: PopupProps? = null
+    @Volatile private var mLastPopupAt: Long = 0L
     private val mPopupsShown = java.util.concurrent.atomic.AtomicLong(0)
     private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
@@ -383,6 +387,9 @@ class PiPupService : Service(), WebServer.Handler {
 
             Log.d(LOG_TAG, "Create popup: $popup")
 
+            mLastPopup = popup
+            mLastPopupAt = SystemClock.elapsedRealtime()
+
             // update-in-place: same id and same content -> keep the view (and its
             // video/web stream) alive and only reschedule the removal timer
 
@@ -532,11 +539,41 @@ class PiPupService : Service(), WebServer.Handler {
                 "elapsed" to ((SystemClock.elapsedRealtime() - mShownAt) / 1000)
             )
         }
+        val last = mLastPopup
+        if (last != null) {
+            state["lastPopup"] = mapOf(
+                "id" to last.id,
+                "position" to last.position.name,
+                "duration" to last.duration,
+                "indefinite" to last.indefinite,
+                "muted" to mediaMuted(last),
+                "media" to mediaInfo(last),
+                "tts" to !last.tts.isNullOrBlank(),
+                "buttons" to last.buttons.size,
+                "secondsAgo" to ((SystemClock.elapsedRealtime() - mLastPopupAt) / 1000)
+            )
+        }
         return newFixedLengthResponse(
             NanoHTTPD.Response.Status.OK,
             APPLICATION_JSON,
             Json.writeValueAsString(state)
         )
+    }
+
+    /// Media summary for /state's lastPopup: {type, width, height?} or null.
+    private fun mediaInfo(p: PopupProps): Map<String, Any?>? = when (val m = p.media) {
+        is PopupProps.Media.Web -> mapOf("type" to "web", "width" to m.width, "height" to m.height)
+        is PopupProps.Media.Video -> mapOf("type" to "video", "width" to m.width)
+        is PopupProps.Media.Image -> mapOf("type" to "image", "width" to m.width)
+        is PopupProps.Media.Bitmap -> mapOf("type" to "bitmap", "width" to m.width)
+        null -> null
+    }
+
+    /// Muted flag of the last popup's media; null when the media type has no audio.
+    private fun mediaMuted(p: PopupProps): Boolean? = when (val m = p.media) {
+        is PopupProps.Media.Web -> m.muted
+        is PopupProps.Media.Video -> m.muted
+        else -> null
     }
 
     override fun handleHttpRequest(session: NanoHTTPD.IHTTPSession?): NanoHTTPD.Response {

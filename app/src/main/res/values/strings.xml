@@ -6,4 +6,7 @@
     <string name="more_information">For more information please read the documentation @ https://github.com/mhoogenbosch/PiPup</string>
     <string name="service_channel_name">Service</string>
     <string name="service_notification_text">Service running</string>
+    <string name="status_service_unreachable">Service not running — reopen the app or reboot the device</string>
+    <string name="status_last_popup">Last popup</string>
+    <string name="status_no_popups_yet">No popups received yet</string>
 </resources>

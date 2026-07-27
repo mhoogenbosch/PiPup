@@ -277,6 +277,11 @@ Returns the current state as JSON:
 }
 ```
 
+Since v0.5.0 the response also contains `lastPopup`: the parameters of the last *received* popup
+(id, position, duration, muted, media type/size, tts, buttons, secondsAgo) — it survives dismiss/expiry,
+so you can always verify what your home-automation actually sent. The same block is rendered live on
+the app's status screen on the TV.
+
 Since v0.2.3 `/state` also reports whether the screen is on/interactive (`screenOn`), the number of
 popups shown since the service started (`popupsShown`), the service uptime in seconds and basic
 device info — all surfaced as entities by the Home Assistant integration. Since v0.2.5 it also
