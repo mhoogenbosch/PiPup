@@ -69,29 +69,7 @@ class PiPupService : Service(), WebServer.Handler {
             getString(R.string.service_channel_name)
         )
 
-        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PendingIntent.FLAG_IMMUTABLE
-        } else 0
-
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java), pendingIntentFlags
-        )
-
-        val mBuilder = NotificationCompat.Builder(this, "service_channel")
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(R.string.service_notification_text))
-            .setContentIntent(pendingIntent)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setAutoCancel(false)
-            .setOngoing(true)
-
-        val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        } else 0
-
-        ServiceCompat.startForeground(this, ONGOING_NOTIFICATION_ID, mBuilder.build(), serviceType)
+        enterForeground()
 
         // Binding :7979 can fail when the previous process was killed and its socket is not
         // released yet (low-memory devices restart this service within seconds). An unguarded
@@ -110,6 +88,51 @@ class PiPupService : Service(), WebServer.Handler {
         // TTS is initialised lazily: the engine is a separate ~100MB process and keeping it
         // bound for the entire service lifetime is the single biggest reason this app gets
         // picked by low-memory killers on 1GB TVs. Popups without `tts` never need it.
+    }
+
+    /// Post the ongoing notification and become a foreground service.
+    ///
+    /// MUST be called for *every* startForegroundService(), not just on creation:
+    /// when the service is already running only onStartCommand runs, and Android
+    /// kills the process with
+    /// `RemoteServiceException: Context.startForegroundService() did not then call
+    /// Service.startForeground()` if the call is missing. That is exactly what a
+    /// keep-alive automation or the connectivity Receiver triggers — the "rescue"
+    /// then crashed the app instead of keeping it alive (seen on a TCL TV that sat
+    /// at 26% availability because of it). startForeground is idempotent, so
+    /// calling it again on an already-foreground service is harmless.
+    private fun enterForeground() {
+        try {
+            val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else 0
+
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0,
+                Intent(this, MainActivity::class.java), pendingIntentFlags
+            )
+
+            val notification = NotificationCompat.Builder(this, "service_channel")
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(getString(R.string.service_notification_text))
+                .setContentIntent(pendingIntent)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setAutoCancel(false)
+                .setOngoing(true)
+                .build()
+
+            val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            } else 0
+
+            ServiceCompat.startForeground(this, ONGOING_NOTIFICATION_ID, notification, serviceType)
+        } catch (ex: Throwable) {
+            // Never let this throw out of onCreate/onStartCommand: a failure here
+            // would take the whole service down, which is worse than running
+            // without the notification.
+            Log.e(LOG_TAG, "startForeground failed: ${ex.message}")
+        }
     }
 
     private fun startWebServer(): Boolean {
@@ -297,6 +320,23 @@ class PiPupService : Service(), WebServer.Handler {
     override fun onBind(intent: Intent): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Answer every startForegroundService() — see enterForeground(). onCreate
+        // does not run for an already-running service, so doing this only there
+        // made each extra start request crash the process.
+        enterForeground()
+
+        // A restart after a kill (START_STICKY, or the boot/connectivity Receiver)
+        // arrives here with the web server gone; bring it back rather than sitting
+        // there as a live process with a dead server.
+        // isAlive() = started, socket open and the listener thread running — a
+        // stricter check than wasStarted(), which stays true after a crash.
+        if (!runCatching { mWebServer.isAlive }.getOrDefault(false)) {
+            Log.w(LOG_TAG, "WebServer not running on start command; restarting it")
+            if (!startWebServer()) {
+                Log.e(LOG_TAG, "Giving up on port $SERVER_PORT; stopping for a clean restart")
+                stopSelf()
+            }
+        }
         return START_STICKY
     }
 

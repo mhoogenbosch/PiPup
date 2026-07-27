@@ -40,6 +40,12 @@ streams) on your TV from your home-automation system, for **as long as you want*
   a `tts` field and is released again after 60s idle. On Google TV devices this keeps the separate
   ~100MB `com.google.android.tts` process out of memory, which matters a lot on 1GB TVs where the
   low-memory killer picks the heaviest processes.
+- **Crash fix: repeated start requests** (since 0.6.1) — `startForeground()` is now called on *every*
+  `startForegroundService()` (i.e. also in `onStartCommand`), not only on creation. Without it Android
+  killed the process with `RemoteServiceException: Context.startForegroundService() did not then call
+  Service.startForeground()`, so every keep-alive attempt — an automation, or the connectivity Receiver —
+  crashed the app instead of keeping it alive. `onStartCommand` also revives the web server when it is no
+  longer alive.
 - **Resilient web server startup** (since 0.4.0) — binding port 7979 is retried (3 attempts, 500ms
   apart) and a definitive failure stops the service for a clean restart, instead of leaving a live
   process with a dead server behind.
