@@ -5,4 +5,7 @@
     <string name="more_information">Meer informatie vind je in de documentatie op https://github.com/mhoogenbosch/PiPup</string>
     <string name="service_channel_name">Service</string>
     <string name="service_notification_text">Service draait</string>
+    <string name="update_available_title">PiPup %1$s is beschikbaar</string>
+    <string name="update_available_message">Druk op OK om de update nu te installeren.</string>
+    <string name="update_install">Installeren</string>
 </resources>

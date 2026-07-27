@@ -9,4 +9,7 @@
     <string name="status_service_unreachable">Service not running — reopen the app or reboot the device</string>
     <string name="status_last_popup">Last popup</string>
     <string name="status_no_popups_yet">No popups received yet</string>
+    <string name="update_available_title">PiPup %1$s is available</string>
+    <string name="update_available_message">Press OK to install the update now.</string>
+    <string name="update_install">Install</string>
 </resources>

@@ -43,6 +43,14 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **Resilient web server startup** (since 0.4.0) — binding port 7979 is retried (3 attempts, 500ms
   apart) and a definitive failure stops the service for a clean restart, instead of leaving a live
   process with a dead server behind.
+- **Self-update** (since 0.6.0) — the app checks the fork's GitHub releases twice a day and can install a
+  newer version itself: it announces a new release once on screen with an **Install** button, exposes
+  `update` in `/state`, and accepts `POST /update` to trigger the update (used by the Home Assistant
+  integration's update entity). Android only accepts an APK signed with the same key, so a tampered
+  download can never replace the app. On **Android 12+** the self-update is silent; on older devices the
+  system shows its install confirmation on the TV, which someone has to accept with the remote.
+  Grant the install permission once (survives updates, not reinstalls):
+  `adb shell appops set nl.rogro82.pipup REQUEST_INSTALL_PACKAGES allow`
 - WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
   (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
 - Assorted fixes (request-body handling, message size/color defaults, WebView cleanup).

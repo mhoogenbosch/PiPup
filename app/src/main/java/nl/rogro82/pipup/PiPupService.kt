@@ -106,6 +106,7 @@ class PiPupService : Service(), WebServer.Handler {
 
         registerNsd()
         startWatchdog()
+        startUpdateChecker()
         // TTS is initialised lazily: the engine is a separate ~100MB process and keeping it
         // bound for the entire service lifetime is the single biggest reason this app gets
         // picked by low-memory killers on 1GB TVs. Popups without `tts` never need it.
@@ -372,6 +373,48 @@ class PiPupService : Service(), WebServer.Handler {
         }, WATCHDOG_INTERVAL_MS)
     }
 
+    /// Periodic self-update check against the fork's GitHub releases. Runs on the
+    /// watchdog handler (mHandler is cleared on every popup removal) and announces a
+    /// new version once, on screen, with an Install button — sideloaded TVs have no
+    /// store, and not every user has adb.
+    private fun startUpdateChecker() {
+        mWatchdogHandler.postDelayed(object : Runnable {
+            override fun run() {
+                Thread {
+                    if (UpdateManager.check() && UpdateManager.updateAvailable) {
+                        maybeAnnounceUpdate()
+                    }
+                }.start()
+                mWatchdogHandler.postDelayed(this, UPDATE_CHECK_INTERVAL_MS)
+            }
+        }, UPDATE_CHECK_FIRST_DELAY_MS)
+    }
+
+    /// Show the "update available" popup at most once per version, and never over a
+    /// popup that is already on screen or while the screen is off.
+    private fun maybeAnnounceUpdate() {
+        val version = UpdateManager.latestVersion ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString(PREF_UPDATE_ANNOUNCED, null) == version) return
+
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!power.isInteractive || mCurrentProps != null) return
+
+        prefs.edit().putString(PREF_UPDATE_ANNOUNCED, version).apply()
+        mHandler.post {
+            createPopup(
+                PopupProps(
+                    duration = 60,
+                    id = UPDATE_POPUP_ID,
+                    position = PopupProps.Position.BottomRight,
+                    title = getString(R.string.update_available_title, version),
+                    message = getString(R.string.update_available_message),
+                    buttons = listOf(PopupProps.Button("install", getString(R.string.update_install)))
+                )
+            )
+        }
+    }
+
     private fun scheduleRemoval(popup: PopupProps) {
         // duration <= 0 means: show until /cancel or until replaced
         if (!popup.indefinite) {
@@ -466,10 +509,16 @@ class PiPupService : Service(), WebServer.Handler {
                 mPopup = PopupView.build(this, popup)
 
                 mPopup?.onButton = { btn ->
-                    // Use the currently shown props, not this closure's `popup`:
-                    // an update-in-place reuses the view but can carry a new
-                    // callback URL, so the captured value would be stale.
-                    sendButtonCallback(mCurrentProps ?: popup, btn)
+                    // The app's own update popup is handled locally; it has no
+                    // callback URL and must not be mistaken for a user button.
+                    if ((mCurrentProps ?: popup).id == UPDATE_POPUP_ID) {
+                        Thread { UpdateManager.installLatest(this) }.start()
+                    } else {
+                        // Use the currently shown props, not this closure's `popup`:
+                        // an update-in-place reuses the view but can carry a new
+                        // callback URL, so the captured value would be stale.
+                        sendButtonCallback(mCurrentProps ?: popup, btn)
+                    }
                     mHandler.post { removePopup(true) }
                 }
 
@@ -539,6 +588,14 @@ class PiPupService : Service(), WebServer.Handler {
                 "elapsed" to ((SystemClock.elapsedRealtime() - mShownAt) / 1000)
             )
         }
+        state["update"] = mapOf(
+            "available" to UpdateManager.updateAvailable,
+            "latest" to UpdateManager.latestVersion,
+            "installing" to UpdateManager.isInstalling,
+            "checkedSecondsAgo" to UpdateManager.lastCheckedAt.takeIf { it > 0 }
+                ?.let { (System.currentTimeMillis() - it) / 1000 },
+            "error" to UpdateManager.lastError
+        )
         val last = mLastPopup
         if (last != null) {
             state["lastPopup"] = mapOf(
@@ -589,6 +646,18 @@ class PiPupService : Service(), WebServer.Handler {
 
                     when(session.uri) {
                         "/state" -> stateResponse()
+                        "/update" -> {
+                            // Self-update on request (own popup button, or the Home
+                            // Assistant integration's update entity). Runs off the
+                            // web-server thread; progress is visible in /state.
+                            Thread {
+                                if (!UpdateManager.updateAvailable) UpdateManager.check()
+                                if (UpdateManager.updateAvailable) {
+                                    UpdateManager.installLatest(this@PiPupService)
+                                }
+                            }.start()
+                            OK("update started")
+                        }
                         "/cancel" -> {
                             // optional ?id=<popup id>: only cancel when it matches the visible popup
                             val id = session.parameters["id"]?.firstOrNull()
@@ -723,6 +792,12 @@ class PiPupService : Service(), WebServer.Handler {
         const val NSD_SERVICE_TYPE = "_pipup._tcp."
         const val PREFS_NAME = "pipup"
         const val PREF_DEVICE_ID = "device_id"
+        const val PREF_UPDATE_ANNOUNCED = "update_announced"
+        const val UPDATE_POPUP_ID = "pipup-update"
+        // First check shortly after boot (network is usually up by then), then twice a day.
+        // GitHub's anonymous API allows 60 requests/hour per IP; this is nowhere near it.
+        const val UPDATE_CHECK_FIRST_DELAY_MS = 120_000L
+        const val UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
         const val WATCHDOG_INTERVAL_MS = 30_000L
         const val ONGOING_NOTIFICATION_ID = 123
         const val WEBSERVER_START_ATTEMPTS = 3
