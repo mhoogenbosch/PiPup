@@ -40,6 +40,9 @@ streams) on your TV from your home-automation system, for **as long as you want*
   a `tts` field and is released again after 60s idle. On Google TV devices this keeps the separate
   ~100MB `com.google.android.tts` process out of memory, which matters a lot on 1GB TVs where the
   low-memory killer picks the heaviest processes.
+- **Restart after an update** (since 0.6.2) — the app listens for `MY_PACKAGE_REPLACED`, so the service
+  comes back by itself after a self-update (or an `adb install -r`). Before this, replacing the APK left the
+  TV silently offline until something started the service again.
 - **Crash fix: repeated start requests** (since 0.6.1) — `startForeground()` is now called on *every*
   `startForegroundService()` (i.e. also in `onStartCommand`), not only on creation. Without it Android
   killed the process with `RemoteServiceException: Context.startForegroundService() did not then call

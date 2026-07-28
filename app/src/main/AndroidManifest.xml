@@ -38,6 +38,13 @@
                 <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
                 <action android:name="android.net.wifi.WIFI_STATE_CHANGED" />
             </intent-filter>
+            <!-- Sent to this app after its own APK is replaced (self-update, or
+                 `adb install -r`). Without it the service stays down after every
+                 update until something else starts it — which is exactly what
+                 happened after the first silent self-update in the field. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
         </receiver>
 
         <service
