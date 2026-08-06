@@ -105,23 +105,60 @@ background service is running._ Starting the service without bringing the app to
 adb shell am start-foreground-service -n nl.rogro82.pipup/.PiPupService
 ```
 
-#### TCL Google TVs: allow auto-restart
+> **Not on TCL Google TV.** There a background start lands the service at `oom_score_adj` 500 and
+> the vendor guard freezes it within seconds. Start the activity instead — see below.
 
-TCL ships an extra guard (`com.tcl.guard`) that forbids Android from automatically restarting a
-killed service unless the app holds the vendor-specific `APP_AUTO_START` app-op — it logs
-`forbid restart Servic ... callee_does't_have_OP_AUTO_START_permission` and the service never
-comes back after a low-memory kill. The on-screen menu ("Permission Guardian" → "Auto-start
-permission") keeps per-app entries locked while its "Automatic management" master switch is on,
-so grant the op over adb instead (note the internal name `android:auto_start`; the displayed
+#### TCL Google TVs: vendor guard kills and freezes the app
+
+TCL ships an extra guard (`com.tcl.guard`) with two separate mechanisms. Both look like an app bug
+and neither is caused by memory pressure — measured on a 1 GB set, PiPup used 26 MB PSS while the
+launcher used 119 MB and the screensaver 91 MB.
+
+**1. It blocks the automatic restart** of a killed service unless the app holds the vendor-specific
+`APP_AUTO_START` app-op — it logs `forbid restart Servic ... callee_does't_have_OP_AUTO_START_permission`
+and the service never comes back after a kill. The on-screen menu ("Permission Guardian" →
+"Auto-start permission") keeps per-app entries locked while its "Automatic management" master switch
+is on, so grant the op over adb instead (note the internal name `android:auto_start`; the displayed
 name `APP_AUTO_START` is not accepted):
 
 ```
 adb shell cmd appops set nl.rogro82.pipup android:auto_start allow
+adb shell dumpsys deviceidle whitelist +nl.rogro82.pipup
 ```
 
-Like the overlay permission this resets on reinstall, so repeat it after every update. On brands
-without this op (Fire TV, Nokia, …) the command fails with `Unknown operation string` — that is
-fine, nothing needs granting there.
+Like the overlay permission the app-op resets on reinstall, so repeat it after every update. On
+brands without this op (Fire TV, Nokia, …) the command fails with `Unknown operation string` — that
+is fine, nothing needs granting there. The deviceidle entry survives reboots and stops
+`am_stop_idle_service` from tearing the service down.
+
+**2. It freezes processes** (`persist.sys.freeze=true`, independent of the AOSP freezer). A frozen
+process is **alive but SIGSTOPped**, which is why this failure mode is so confusing: `ps` still
+lists PiPup while port 7979 no longer answers, so clients hang in a timeout instead of getting a
+connection error. Recognise it like this:
+
+```
+adb shell 'P=$(pidof nl.rogro82.pipup); grep freezer /proc/$P/cgroup; cat /proc/$P/oom_score_adj'
+#  frozen  ->  5:freezer:/frozen   ...  500
+#  healthy ->  5:freezer:/thaw     ...  200
+adb shell netstat -ltn | grep 7979   # frozen: Recv-Q > 0 on LISTEN, plus CLOSE_WAIT rows
+```
+
+Incoming traffic does not thaw the app; only bringing it to the foreground does. **What keeps it
+running is `oom_score_adj` 200, and the app only reaches that when it is started from a foreground
+context**, i.e. via the activity:
+
+```
+adb shell input keyevent KEYCODE_WAKEUP   # only needed while the screensaver is on
+adb shell am start -n nl.rogro82.pipup/.MainActivity
+adb shell input keyevent KEYCODE_HOME
+```
+
+Started this way the app stays up, screensaver included. Two caveats: `am start -W` **hangs** while
+the TV is dreaming (use it without `-W`), and this briefly takes over the screen, so avoid it while
+someone is watching. It is worth automating the recovery — the
+[ha-pipup integration README](https://github.com/mhoogenbosch/ha-pipup#device-notes-tcl-google-tv-needs-a-keep-alive-automation)
+has a ready-made Home Assistant automation, including the pitfall that a `ps | grep pipup` guard
+silently defeats it (a frozen process is still listed).
 
 ## Security
 
