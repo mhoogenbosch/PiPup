@@ -5,7 +5,22 @@ on:
     branches: [master]
     tags: ['v*']
   pull_request:
+    # Documentation-only changes are covered by build-docs.yml, which reports the
+    # same required "build" check without compiling an APK — a readme edit should
+    # not have to wait for Gradle (and for a free runner) to become mergeable.
+    paths-ignore:
+      - '**.md'
+      - 'graphics/**'
+      - '.idea/**'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
+
+concurrency:
+  # Never let two runs for the same ref fight over the "build" status check; the
+  # cancelled one reports a failure and blocks the pull request.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

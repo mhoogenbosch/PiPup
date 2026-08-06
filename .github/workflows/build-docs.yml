@@ -1,0 +1,28 @@
+name: Build APK (docs)
+
+# Branch protection requires the "build" status check on master. A required check
+# that never runs leaves a pull request blocked forever, so documentation-only
+# changes — which build.yml skips via paths-ignore — get the same check reported
+# by this no-op job instead of building an APK.
+#
+# Keep the path list here in sync with the paths-ignore list in build.yml.
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+      - 'graphics/**'
+      - '.idea/**'
+      - 'LICENSE'
+      - '.gitignore'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: No code changed
+        run: echo "Documentation-only change — no APK build needed."
