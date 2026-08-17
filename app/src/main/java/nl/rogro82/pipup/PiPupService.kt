@@ -730,6 +730,25 @@ class PiPupService : Service(), WebServer.Handler {
             )
         }
 
+        // Check before waking. Switching someone's TV on and then answering "this
+        // device cannot show that screen" is the worst of both worlds - seen for real
+        // when a failing request from Home Assistant still lit up a TV in another room.
+        if (key != null && Permissions.fixIntent(this, key) == null) {
+            Log.d(LOG_TAG, "Permission fix $key: no screen on this device")
+            return newFixedLengthResponse(
+                NanoHTTPD.Response.Status.NOT_IMPLEMENTED,
+                APPLICATION_JSON,
+                Json.writeValueAsString(
+                    mapOf(
+                        "what" to key,
+                        "ok" to false,
+                        "granted" to Permissions.granted(this, key),
+                        "adb" to Permissions.adbCommand(key)
+                    )
+                )
+            )
+        }
+
         PowerController.wake(this)
 
         val ok = if (key == null) Permissions.launchApp(this)
