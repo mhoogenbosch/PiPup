@@ -3,6 +3,7 @@ package nl.rogro82.pipup
 import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.PowerManager
 import android.util.Log
 
@@ -30,6 +31,19 @@ object PowerController {
 
     fun screenOn(context: Context): Boolean =
         (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+
+    /// Whether this platform has device administration at all.
+    ///
+    /// Worth asking, because `dpm set-active-admin` happily reports `Success` on devices
+    /// that do not (measured on a Nokia Streaming Box 8010 and a TCL Google TV, both of
+    /// which register nothing). Reporting "not supported" instead of "not granted" keeps
+    /// anyone from chasing a grant that can never stick.
+    fun deviceAdminSupported(context: Context): Boolean = try {
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_DEVICE_ADMIN)
+    } catch (ex: Throwable) {
+        Log.e(LOG_TAG, "Cannot query device admin feature: ${ex.message}")
+        false
+    }
 
     fun deviceAdminActive(context: Context): Boolean = try {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager

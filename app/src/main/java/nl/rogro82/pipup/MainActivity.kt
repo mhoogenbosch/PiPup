@@ -21,6 +21,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import com.fasterxml.jackson.databind.JsonNode
 import nl.rogro82.pipup.Utils.getIpAddress
@@ -30,10 +32,13 @@ import java.net.URL
 class MainActivity : Activity() {
 
     private val mHandler = Handler(Looper.getMainLooper())
+
+    /// last rendered permission state; the panel is only rebuilt when it changes
+    private var mPermissionSignature: String? = null
     private val mRefresh = object : Runnable {
         override fun run() {
             refreshStatus()
-            refreshWarning()
+            refreshPermissions()
             mHandler.postDelayed(this, REFRESH_INTERVAL_MS)
         }
     }
@@ -84,13 +89,98 @@ class MainActivity : Activity() {
         mHandler.removeCallbacks(mRefresh)
     }
 
-    /// The one failure mode that looks like success from the outside: without the overlay
-    /// permission every /notify is answered with 200 and nothing appears on screen. Say so
-    /// here, on the only screen someone with a remote can reach, with the command to fix it.
-    /// Re-checked on every refresh so the warning disappears as soon as it is granted.
-    private fun refreshWarning() {
-        findViewById<TextView>(R.id.textViewWarning)?.visibility =
-            if (Permissions.overlay(this)) View.GONE else View.VISIBLE
+    /// Permission panel: the one class of failure that looks like success from the
+    /// outside. Without the overlay permission every /notify is answered with 200 and
+    /// nothing appears on screen, and `adb install -r` silently resets it again.
+    ///
+    /// So this screen - the only one someone with a remote can reach - shows the actual
+    /// state of each grant and, where the device has a screen for it, a button that goes
+    /// straight there. Where it has none (Fire OS answers those intents with do-nothing
+    /// CTS placeholders) it prints the adb command instead of a button that does nothing.
+    ///
+    /// Rebuilt on every refresh, so a permission granted elsewhere - by adb, or from
+    /// Home Assistant - turns green here within two seconds.
+    private fun refreshPermissions() {
+        val panel = findViewById<LinearLayout>(R.id.permissionsPanel) ?: return
+        val rows = Permissions.FIXABLE_KEYS.mapNotNull { key ->
+            val granted = Permissions.granted(this, key) ?: return@mapNotNull null
+            // Optional grants are only worth screen space when they are missing;
+            // the overlay is always shown, because everything depends on it.
+            if (granted && key != Permissions.KEY_OVERLAY) return@mapNotNull null
+            Triple(key, granted, Permissions.fixIntent(this, key) != null)
+        }
+
+        // Cheap redraw guard: rebuilding every 2s would fight the DPAD for focus.
+        val signature = rows.joinToString("|") { "${it.first}${it.second}${it.third}" }
+        if (signature == mPermissionSignature) return
+        mPermissionSignature = signature
+
+        panel.removeAllViews()
+        rows.forEach { (key, granted, fixable) -> panel.addView(permissionRow(key, granted, fixable)) }
+    }
+
+    private fun permissionRow(key: String, granted: Boolean, fixable: Boolean): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(0, 6, 0, 6)
+        }
+
+        val label = when (key) {
+            Permissions.KEY_OVERLAY -> R.string.permission_overlay
+            Permissions.KEY_INSTALL -> R.string.permission_install
+            Permissions.KEY_ADMIN -> R.string.permission_admin
+            else -> R.string.permission_accessibility
+        }
+        row.addView(TextView(this).apply {
+            text = getString(
+                if (granted) R.string.permission_line_ok else R.string.permission_line_missing,
+                getString(label)
+            )
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            // a granted line is reassurance, a missing one is the message: only the
+            // second gets a colour that pulls the eye across the room
+            setTextColor(resources.getColor(if (granted) R.color.ok else R.color.warning))
+            if (!granted) setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+
+        if (granted) return row
+
+        row.addView(TextView(this).apply {
+            text = getString(
+                when (key) {
+                    Permissions.KEY_OVERLAY -> R.string.permission_overlay_why
+                    Permissions.KEY_INSTALL -> R.string.permission_install_why
+                    Permissions.KEY_ADMIN -> R.string.permission_admin_why
+                    else -> R.string.permission_accessibility_why
+                }
+            )
+            textSize = 12f
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+        })
+
+        if (fixable) {
+            row.addView(
+                Button(this).apply {
+                    text = getString(R.string.permission_fix)
+                    isFocusable = true
+                    setOnClickListener { Permissions.launchFix(this@MainActivity, key) }
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }
+            )
+        } else {
+            // no screen on this device: the command is the only honest answer
+            row.addView(TextView(this).apply {
+                text = Permissions.adbCommand(key)
+                textSize = 11f
+                setTextIsSelectable(false)
+            })
+        }
+        return row
     }
 
     /// Live status block below the server address. Fetched from the service's own

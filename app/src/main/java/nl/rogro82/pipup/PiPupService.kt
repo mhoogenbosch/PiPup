@@ -699,6 +699,59 @@ class PiPupService : Service(), WebServer.Handler {
         )
     }
 
+    /// POST /permissions/fix[?what=overlay|install|admin|accessibility|next]
+    ///
+    /// Puts the screen that grants a permission in front of the user. An app can never
+    /// grant these itself, but it can walk someone to the exact spot - which beats
+    /// telling a person with a remote in hand to go find an adb prompt.
+    ///
+    /// Without `what` it opens PiPup's own status screen, which lists every permission
+    /// with its own button; `what=next` jumps straight to the first missing one.
+    ///
+    /// The TV is woken first: a settings screen on a dark panel helps nobody.
+    /// 501 when this device has no such screen (Fire OS resolves these actions to
+    /// do-nothing CTS placeholders) - the response then carries the adb command.
+    private fun permissionFixResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val requested = session.parameters["what"]?.firstOrNull()?.lowercase()
+
+        val key = when (requested) {
+            null, "", "app", "status" -> null
+            "next" -> Permissions.firstMissing(this)
+                ?: return newFixedLengthResponse(
+                    NanoHTTPD.Response.Status.OK,
+                    APPLICATION_JSON,
+                    Json.writeValueAsString(
+                        mapOf("what" to "next", "ok" to true, "nothingMissing" to true)
+                    )
+                )
+            in Permissions.FIXABLE_KEYS -> requested
+            else -> return InvalidRequest(
+                "what must be one of ${Permissions.FIXABLE_KEYS}, 'next' or omitted"
+            )
+        }
+
+        PowerController.wake(this)
+
+        val ok = if (key == null) Permissions.launchApp(this)
+        else Permissions.launchFix(this, key)
+
+        val body = Json.writeValueAsString(
+            mapOf(
+                "what" to (key ?: "app"),
+                "ok" to ok,
+                "granted" to key?.let { Permissions.granted(this, it) },
+                // so a controller can show what to do where no screen exists
+                "adb" to key?.takeIf { !ok }?.let { Permissions.adbCommand(it) }
+            )
+        )
+        Log.d(LOG_TAG, "Permission fix ${key ?: "app"}: ok=$ok")
+        return newFixedLengthResponse(
+            if (ok) NanoHTTPD.Response.Status.OK else NanoHTTPD.Response.Status.NOT_IMPLEMENTED,
+            APPLICATION_JSON,
+            body
+        )
+    }
+
     /// Media summary for /state's lastPopup: {type, width, height?} or null.
     private fun mediaInfo(p: PopupProps): Map<String, Any?>? = when (val m = p.media) {
         is PopupProps.Media.Web -> mapOf("type" to "web", "width" to m.width, "height" to m.height)
@@ -741,6 +794,7 @@ class PiPupService : Service(), WebServer.Handler {
                             OK("update started")
                         }
                         "/power" -> powerResponse(session)
+                        "/permissions/fix" -> permissionFixResponse(session)
                         "/cancel" -> {
                             // optional ?id=<popup id>: only cancel when it matches the visible popup
                             val id = session.parameters["id"]?.firstOrNull()

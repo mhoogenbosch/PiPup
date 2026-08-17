@@ -1,4 +1,5 @@
 <resources>
-    <!-- status screen: missing permission warning -->
-    <color name="warning">#FFB300</color>
+    <!-- permission panel on the status screen; both readable on the blue background -->
+    <color name="warning">#FFD54F</color>
+    <color name="ok">#DFF3E3</color>
 </resources>
