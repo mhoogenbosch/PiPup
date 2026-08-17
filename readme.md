@@ -439,6 +439,11 @@ switch's `can_sleep` attribute (and `/state`) show that immediately.
 overwriting it disables other accessibility services, such as Projectivy Launcher's. The installer
 scripts append; the snippet above only holds for a device with none enabled.
 
+⚠️ **Like the app-ops, this grant does not survive a reinstall.** Replacing the APK (`adb install -r`,
+including an update) drops the app out of the enabled list, and screen-off silently stops working —
+`/state` reports `power.canSleep: false` from then on. Re-run `install.sh --accessibility`, or include
+the flag in the install itself. The device admin route does not have this problem.
+
 The accessibility service declares no event types and does not retrieve window content: it is bound
 purely so `GLOBAL_ACTION_LOCK_SCREEN` can be called, and reads nothing from your screen.
 
