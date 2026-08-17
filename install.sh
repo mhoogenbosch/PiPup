@@ -202,7 +202,10 @@ for device in "${DEVICES[@]}"; do
     fi
     if [ -n "$state" ]; then
         version=$(printf '%s' "$state" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
-        overlay=$(printf '%s' "$state" | grep -o '"overlay":[a-z]*' | cut -d: -f2)
+        # Anchored on "permissions": since app 0.8.0 there is a second "overlay" key
+        # inside "fixable", and a loose match returned both values at once.
+        overlay=$(printf '%s' "$state" \
+            | grep -o '"permissions":{"overlay":[a-z]*' | cut -d: -f3)
         ok "running: v${version:-?} on http://$host:$PORT (overlay=${overlay:-?})"
         [ "${overlay:-}" = "true" ] || err "overlay permission still missing - popups will stay invisible"
 
