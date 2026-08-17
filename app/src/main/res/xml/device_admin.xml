@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only force-lock: PiPup uses the admin exclusively for lockNow() (screen off).
+     Deliberately no password, camera or wipe policies - those are also the ones
+     Android deprecated for legacy device admins from Android 9 onwards. -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock/>
+    </uses-policies>
+</device-admin>

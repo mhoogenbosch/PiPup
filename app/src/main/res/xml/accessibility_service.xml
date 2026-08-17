@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately observes nothing: no accessibilityEventTypes and no
+     canRetrieveWindowContent, so the service never sees any UI content. It is
+     only bound so PiPup can call GLOBAL_ACTION_LOCK_SCREEN (screen off). -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+        android:accessibilityFeedbackType="feedbackGeneric"
+        android:description="@string/accessibility_service_description"
+        android:notificationTimeout="0"/>

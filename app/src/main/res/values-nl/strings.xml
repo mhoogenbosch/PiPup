@@ -8,4 +8,6 @@
     <string name="update_available_title">PiPup %1$s is beschikbaar</string>
     <string name="update_available_message">Druk op OK om de update nu te installeren.</string>
     <string name="update_install">Installeren</string>
+    <string name="accessibility_service_description">Hiermee kan PiPup het scherm op verzoek uitzetten. Alleen nodig op toestellen waar de apparaatbeheerder dat niet kan; PiPup leest niets van het scherm.</string>
+    <string name="warning_no_overlay">Geen overlay-permissie — popups worden aangenomen maar blijven onzichtbaar. Ken die eenmalig toe via adb:\nadb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow</string>
 </resources>

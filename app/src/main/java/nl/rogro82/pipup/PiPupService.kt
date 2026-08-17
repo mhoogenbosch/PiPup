@@ -628,6 +628,12 @@ class PiPupService : Service(), WebServer.Handler {
                 "elapsed" to ((SystemClock.elapsedRealtime() - mShownAt) / 1000)
             )
         }
+        state["power"] = mapOf(
+            "canWake" to true,
+            "canSleep" to PowerController.canSleep(this),
+            "sleepMethod" to PowerController.sleepMethod(this)
+        )
+        state["permissions"] = Permissions.asMap(this)
         state["update"] = mapOf(
             "available" to UpdateManager.updateAvailable,
             "latest" to UpdateManager.latestVersion,
@@ -654,6 +660,42 @@ class PiPupService : Service(), WebServer.Handler {
             NanoHTTPD.Response.Status.OK,
             APPLICATION_JSON,
             Json.writeValueAsString(state)
+        )
+    }
+
+    /// POST /power?state=on|off|toggle - screen on/off for this TV.
+    ///
+    /// Runs straight on the web-server thread: waking (startActivity/wake lock) and
+    /// sleeping (lockNow/global action) are binder calls that touch no views, so the
+    /// caller gets the real result instead of a fire-and-forget "accepted".
+    ///
+    /// 501 (not 400) when the device has no way to turn the screen off - that tells a
+    /// controller "this device cannot", as opposed to "your request was malformed".
+    private fun powerResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val requested = session.parameters["state"]?.firstOrNull()?.lowercase()
+        val target = when (requested) {
+            "on", "wake", "true", "1" -> true
+            "off", "sleep", "false", "0" -> false
+            "toggle" -> !PowerController.screenOn(this)
+            else -> return InvalidRequest("state must be on, off or toggle")
+        }
+
+        val method = if (target) "activity" else PowerController.sleepMethod(this)
+        val ok = if (target) PowerController.wake(this) else PowerController.sleep(this)
+
+        Log.d(LOG_TAG, "Power ${if (target) "on" else "off"} via ${method ?: "-"}: ok=$ok")
+
+        val body = Json.writeValueAsString(mapOf(
+            "state" to if (target) "on" else "off",
+            "ok" to ok,
+            "method" to method,
+            // the wake activity is still starting up, so this can lag one poll behind
+            "screenOn" to PowerController.screenOn(this)
+        ))
+        return newFixedLengthResponse(
+            if (ok) NanoHTTPD.Response.Status.OK else NanoHTTPD.Response.Status.NOT_IMPLEMENTED,
+            APPLICATION_JSON,
+            body
         )
     }
 
@@ -698,6 +740,7 @@ class PiPupService : Service(), WebServer.Handler {
                             }.start()
                             OK("update started")
                         }
+                        "/power" -> powerResponse(session)
                         "/cancel" -> {
                             // optional ?id=<popup id>: only cancel when it matches the visible popup
                             val id = session.parameters["id"]?.firstOrNull()
@@ -798,7 +841,13 @@ class PiPupService : Service(), WebServer.Handler {
                                             messageColor = messageColor,
                                             media = media,
                                             tts = params["tts"],
-                                            ttsLanguage = params["ttsLanguage"]
+                                            ttsLanguage = params["ttsLanguage"],
+                                            // styling also applies to uploaded snapshots
+                                            urgency = params["urgency"],
+                                            borderColor = params["borderColor"],
+                                            borderWidth = params["borderWidth"]?.toIntOrNull(),
+                                            cornerRadius = params["cornerRadius"]?.toFloatOrNull(),
+                                            showProgress = params["showProgress"]?.toBoolean() ?: false
                                         )
                                     }
                                     else -> throw Exception("invalid content-type")

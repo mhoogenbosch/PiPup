@@ -1,2 +1,4 @@
 <resources>
+    <!-- status screen: missing permission warning -->
+    <color name="warning">#FFB300</color>
 </resources>

@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private val mRefresh = object : Runnable {
         override fun run() {
             refreshStatus()
+            refreshWarning()
             mHandler.postDelayed(this, REFRESH_INTERVAL_MS)
         }
     }
@@ -81,6 +82,15 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         mHandler.removeCallbacks(mRefresh)
+    }
+
+    /// The one failure mode that looks like success from the outside: without the overlay
+    /// permission every /notify is answered with 200 and nothing appears on screen. Say so
+    /// here, on the only screen someone with a remote can reach, with the command to fix it.
+    /// Re-checked on every refresh so the warning disappears as soon as it is granted.
+    private fun refreshWarning() {
+        findViewById<TextView>(R.id.textViewWarning)?.visibility =
+            if (Permissions.overlay(this)) View.GONE else View.VISIBLE
     }
 
     /// Live status block below the server address. Fetched from the service's own

@@ -35,6 +35,20 @@ streams) on your TV from your home-automation system, for **as long as you want*
   and dismiss), **BACK** dismisses without an action.
 - **Countdown bar** (since 0.3.0) — `showProgress: true` animates a progress bar over a finite duration.
 - **Urgency presets** (since 0.3.0) — `urgency: info|warning|critical` adds a blue/orange/red border.
+- **Custom border styling** (since 0.7.0) — `borderColor`, `borderWidth` and `cornerRadius` style the
+  popup frame yourself; each field overrides its part of the `urgency` preset, so the preset stays a
+  shorthand and `borderWidth: 0` switches its border off again. Also available on uploaded snapshots
+  (multipart), which previously ignored `urgency` and `showProgress` entirely.
+- **Screen on/off** (since 0.7.0) — `POST /power?state=on|off|toggle` wakes the TV or puts it in
+  standby, without a second integration for ADB or HDMI-CEC. `/state` publishes what is actually
+  possible on this device (`power.canSleep`, `power.sleepMethod`) instead of accepting a request it
+  cannot honour. See [Screen on/off](#screen-onoff).
+- **Permission reporting + installers** (since 0.7.0) — `/state` reports what the app was granted
+  (`permissions.overlay`, `installPackages`, vendor `autoStart`, `deviceAdmin`, `accessibility`) and the
+  status screen on the TV warns when the overlay permission is missing — until now that failure was
+  invisible: every popup was answered with HTTP 200 and nothing appeared. `install.sh` / `install.ps1`
+  ship with each release and do the whole install *including* the app-ops that an app cannot grant
+  itself and that every reinstall resets.
 - **Localization** (since 0.3.1) — the app UI follows the device language (English/Dutch).
 - **Lazy TTS engine** (since 0.4.0) — the speech engine is only bound when a popup actually carries
   a `tts` field and is released again after 60s idle. On Google TV devices this keeps the separate
@@ -85,17 +99,39 @@ authorization prompt on the TV (once per computer).
 
 ### Install
 
-Download the APK from the [releases](../../releases) page and install it with adb.
-If you have the original Play Store version installed you need to uninstall that first
-(different signature, same application id).
+Grab `install.sh` (Linux/macOS/WSL) or `install.ps1` (Windows) from the
+[releases](../../releases) page and point it at your TVs:
+
+```
+./install.sh 192.168.1.10 192.168.1.11          # downloads the latest APK itself
+./install.sh --power --apk PiPup.apk 192.168.1.10
+```
+
+It installs the APK, grants the app-ops below, starts the service and verifies over HTTP that the
+app is actually answering with the overlay permission in place. `--power` also activates the device
+admin (for screen off), `--accessibility` enables the fallback for that, and `--force-uninstall`
+handles a differently-signed build that is already installed — note that uninstalling wipes the
+app's stable device id, so Home Assistant sees a new device afterwards.
+
+<details>
+<summary>Doing it by hand</summary>
 
 ```
 adb connect <tv-ip>:5555
 adb install -r PiPup.apk
 adb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow
+adb shell appops set nl.rogro82.pipup REQUEST_INSTALL_PACKAGES allow
 ```
 
-The second command grants the overlay permission, which has no settings UI on Android TV.
+The overlay permission has no settings UI on Android TV, and the install permission is what lets the
+app apply its own updates. **Both are app-ops**: an app cannot grant them to itself (that is
+shell/system territory), which is why they are handed out over adb — and why `adb install -r`
+**resets them**, so they have to be granted again after every install. `/state` and the status screen
+on the TV show whether the overlay permission is currently in place.
+
+If you have the original Play Store version installed you need to uninstall that first (different
+signature, same application id).
+</details>
 
 _After installation or updating, open the application once (or reboot the TV) to make sure the
 background service is running._ Starting the service without bringing the app to the foreground
@@ -175,6 +211,11 @@ trust boundary the network itself.
   automations from button events (e.g. unlocking a door), have the caller include an unguessable,
   single-use token in that callback URL and verify it on receipt — the
   [ha-pipup integration](https://github.com/mhoogenbosch/ha-pipup) does this automatically.
+- Since 0.7.0 the same unauthenticated port also accepts `POST /power`, so anyone who can reach the TV
+  can switch its screen on or off. That is annoying rather than dangerous, but it is a reason not to
+  grant the screen-off route (device admin / accessibility) on a TV you deliberately expose. Granting
+  nothing leaves `/power?state=off` returning 501, and the device admin only asks for `force-lock` —
+  no password, camera or wipe policies — so the worst an attacker gains is a TV that goes to standby.
 
 ## Integrating
 
@@ -249,6 +290,29 @@ buttons: the overlay only takes input focus when buttons are present, **OK** act
 button — the app POSTs `{"popup", "button", "label", "device", "name"}` to the callback and
 dismisses — and **BACK** dismisses without an action.
 
+Since 0.7.0 the border can be styled directly, beyond the three urgency presets:
+
+```json
+{
+  "borderColor": "#00E5FF",
+  "borderWidth": 10,
+  "cornerRadius": 28
+}
+```
+
+| Field          | Type / default                                                        |
+| -------------- | --------------------------------------------------------------------- |
+| `borderColor`  | String `[AA]RRGGBB` (default: the urgency color, else `#ffffff`)       |
+| `borderWidth`  | Integer pixels (default: the urgency width, else `4` when a color is given; `0` = no border) |
+| `cornerRadius` | Number pixels (default: `8` when a border is drawn, else `0`)          |
+
+Each field independently overrides the `urgency` preset, so the two combine: `urgency: "critical"`
+with `borderWidth: 2` keeps the red but makes it thin, and `borderWidth: 0` removes the preset's
+border while keeping any other styling. `cornerRadius` works without a border too, for rounded
+corners on a plain popup. Sizes are in **pixels**, like every other dimension in this API (media
+width, padding) — on a 1080p TV a border of 10 is comfortably visible. An unparseable color falls
+back to the default instead of dropping the popup.
+
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.
 - `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical
@@ -281,6 +345,11 @@ Form-fields:
 | imageWidth      | Integer (default=480)                        |
 | tts             | String (optional, spoken aloud, since 0.2.5) |
 | ttsLanguage     | String (optional BCP-47 tag, since 0.2.5)    |
+| urgency         | String info/warning/critical (since 0.7.0)   |
+| borderColor     | String (format=[AA]RRGGBB, since 0.7.0)      |
+| borderWidth     | Integer pixels (since 0.7.0)                 |
+| cornerRadius    | Number pixels (since 0.7.0)                  |
+| showProgress    | Boolean (default=false, since 0.7.0)         |
 
 `position` is an enum ranging from 0 to 4:
 
@@ -306,6 +375,59 @@ the visible popup has that id — e.g. `POST /cancel?id=doorbell`. If the visibl
 id the call is a no-op (HTTP 200 with an explanatory message), so a delayed "hide camera" automation
 cannot accidentally cancel a newer, unrelated popup.
 
+### Screen on/off
+
+| Property      | Value                        |
+| ------------- | ---------------------------- |
+| Path:         | /power?state=on\|off\|toggle |
+| Method:       | POST                         |
+
+Since 0.7.0. Answers with the result rather than a bare "accepted":
+
+```json
+{ "state": "off", "ok": true, "method": "device_admin", "screenOn": false }
+```
+
+HTTP 200 when it was carried out, **501** when this device has no way to do it, 400 on a missing or
+unknown `state`. (`screenOn` in the reply can lag one poll behind on `state=on`: the wake activity is
+still starting up.)
+
+**On** needs nothing: PiPup launches an invisible activity with `setTurnScreenOn(true)`, which is the
+supported way to wake a device. On HDMI-CEC setups waking the box also switches the TV to its input.
+
+**Off** is the one capability that can genuinely be missing, because no sideloaded app may put a
+device to sleep on its own. There are two routes, and PiPup uses whichever is granted (device admin
+first). Grant one **once**, over adb — `install.sh --power` / `--accessibility` do exactly this:
+
+```
+# route 1 (preferred): device admin. Only asks for force-lock, nothing else.
+adb shell dpm set-active-admin nl.rogro82.pipup/.AdminReceiver
+
+# route 2: accessibility fallback, for devices without the device-admin feature
+adb shell settings put secure enabled_accessibility_services \
+    nl.rogro82.pipup/nl.rogro82.pipup.PiPupAccessibilityService
+adb shell settings put secure accessibility_enabled 1
+```
+
+Route 2 exists because a fair number of Android TV boxes ship **without** the device-admin feature at
+all (`dumpsys device_policy` shows `mHasFeature=false`). Confusingly, `dpm set-active-admin` still
+prints `Success` there while nothing is registered — so trust `/state`, not `dpm`. Verified: a Fire TV
+stick (Fire OS, Android 9) locks via device admin, a Nokia Streaming Box 8010 (Android 14) has no
+device-admin feature and locks via the accessibility route.
+
+⚠️ **When appending to `enabled_accessibility_services`, keep the existing value** (colon-separated) —
+overwriting it disables other accessibility services, such as Projectivy Launcher's. The installer
+scripts append; the snippet above only holds for a device with none enabled.
+
+The accessibility service declares no event types and does not retrieve window content: it is bound
+purely so `GLOBAL_ACTION_LOCK_SCREEN` can be called, and reads nothing from your screen.
+
+`/state` publishes the capability so a client can hide a button it cannot honour:
+
+```json
+"power": { "canWake": true, "canSleep": true, "sleepMethod": "device_admin" }
+```
+
 ### State
 
 | Property      | Value            |
@@ -318,7 +440,7 @@ Returns the current state as JSON:
 ```json
 {
   "app": "PiPup",
-  "version": "0.3.1",
+  "version": "0.7.0",
   "id": "6f1f9c1e-4a3f-4a44-9d2c-6f1f9c1e4a3f",
   "name": "FireTV Veranda",
   "visible": true,
@@ -327,9 +449,20 @@ Returns the current state as JSON:
   "watchdogCleanups": 0,
   "uptime": 86400,
   "device": { "model": "AFTKA", "manufacturer": "Amazon", "android": "9" },
-  "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 }
+  "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 },
+  "power": { "canWake": true, "canSleep": true, "sleepMethod": "device_admin" },
+  "permissions": {
+    "overlay": true, "installPackages": true, "autoStart": null,
+    "deviceAdmin": true, "accessibility": false, "complete": true
+  }
 }
 ```
+
+Since v0.7.0 `permissions` reports what the app was actually granted, and `power` what it can do with
+the screen (see [Screen on/off](#screen-onoff)). `overlay: false` is the one to watch: popups are then
+accepted with HTTP 200 and stay invisible. `autoStart` is TCL's vendor app-op and is `null` on every
+device that does not have it — that is "not applicable", not a problem. `complete` is the short answer
+to "can this device show popups at all".
 
 Since v0.5.0 the response also contains `lastPopup`: the parameters of the last *received* popup
 (id, position, duration, muted, media type/size, tts, buttons, secondsAgo) — it survives dismiss/expiry,
