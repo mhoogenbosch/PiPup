@@ -151,9 +151,13 @@ for device in "${DEVICES[@]}"; do
     fi
 
     if [ "$GRANT_POWER" -eq 1 ]; then
+        # NB: do not trust this command's output. On devices without the device-admin
+        # feature (a fair number of Android TV boxes) `dpm set-active-admin` reports
+        # `Success` while registering nothing at all - seen on both a Nokia Streaming
+        # Box 8010 and a TCL Google TV. The real check is /state below.
         admin=$(adb -s "$target" shell "dpm set-active-admin $ADMIN_COMPONENT" 2>&1)
         if printf '%s' "$admin" | grep -qi 'Success\|now an active admin'; then
-            ok "device admin active (screen off available)"
+            log "  · device admin requested (verifying below)"
         else
             warn "device admin refused: $(printf '%s' "$admin" | tr '\n' ' ')"
         fi
@@ -201,6 +205,18 @@ for device in "${DEVICES[@]}"; do
         overlay=$(printf '%s' "$state" | grep -o '"overlay":[a-z]*' | cut -d: -f2)
         ok "running: v${version:-?} on http://$host:$PORT (overlay=${overlay:-?})"
         [ "${overlay:-}" = "true" ] || err "overlay permission still missing - popups will stay invisible"
+
+        if [ "$GRANT_POWER" -eq 1 ] || [ "$GRANT_ACCESSIBILITY" -eq 1 ]; then
+            can_sleep=$(printf '%s' "$state" | grep -o '"canSleep":[a-z]*' | cut -d: -f2)
+            method=$(printf '%s' "$state" | grep -o '"sleepMethod":"[^"]*"' | cut -d'"' -f4)
+            if [ "${can_sleep:-}" = "true" ]; then
+                ok "screen off available via ${method:-?}"
+            else
+                warn "screen off NOT available: this device has no working device-admin"
+                warn "feature (the dpm command reports Success anyway). Re-run with"
+                warn "--accessibility to use the fallback route instead."
+            fi
+        fi
     else
         warn "no answer on http://$host:$PORT/state yet; open the app once on the TV"
     fi

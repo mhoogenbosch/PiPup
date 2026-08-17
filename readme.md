@@ -415,9 +415,19 @@ adb shell settings put secure accessibility_enabled 1
 
 Route 2 exists because a fair number of Android TV boxes ship **without** the device-admin feature at
 all (`dumpsys device_policy` shows `mHasFeature=false`). Confusingly, `dpm set-active-admin` still
-prints `Success` there while nothing is registered — so trust `/state`, not `dpm`. Verified: a Fire TV
-stick (Fire OS, Android 9) locks via device admin, a Nokia Streaming Box 8010 (Android 14) has no
-device-admin feature and locks via the accessibility route.
+prints `Success` there while nothing is registered — so trust `/state`, not `dpm` (the installer
+scripts verify it that way and tell you to switch routes). Verified on hardware:
+
+| Device | Android | Screen on | Screen off |
+| --- | --- | --- | --- |
+| Fire TV stick (AFTKA) | 9 (Fire OS) | ✓ | ✓ device admin |
+| Nokia Streaming Box 8010 | 14 | ✓ | ✓ accessibility (no device-admin feature) |
+| TCL Google TV | 11 | ✓ | ✓ accessibility (no device-admin feature) |
+
+Two things seen while testing: a wake request that arrives **within a few seconds of putting the
+device to sleep** can be ignored while the sleep transition is still completing (a second call works),
+and on Android 13+ an accessibility service enabled over adb can be revoked again by the system — the
+switch's `can_sleep` attribute (and `/state`) show that immediately.
 
 ⚠️ **When appending to `enabled_accessibility_services`, keep the existing value** (colon-separated) —
 overwriting it disables other accessibility services, such as Projectivy Launcher's. The installer
