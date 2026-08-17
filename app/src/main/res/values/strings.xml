@@ -12,4 +12,6 @@
     <string name="update_available_title">PiPup %1$s is available</string>
     <string name="update_available_message">Press OK to install the update now.</string>
     <string name="update_install">Install</string>
+    <string name="accessibility_service_description">Lets PiPup turn the screen off on request. Only needed on devices where the device admin cannot; PiPup reads nothing from the screen.</string>
+    <string name="warning_no_overlay">No overlay permission — popups are accepted but stay invisible. Grant it once over adb:\nadb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow</string>
 </resources>

@@ -20,6 +20,12 @@ data class PopupProps(
     val tts: String? = null,              // optional text spoken on the device when the popup is (re)shown
     val ttsLanguage: String? = null,      // optional BCP-47 tag (e.g. "nl-NL"); device default when omitted
     val urgency: String? = null,          // info | warning | critical: colored border preset
+    // Explicit border styling; each field overrides the urgency preset on its own, so
+    // `urgency` keeps working as a shorthand. Sizes are in pixels, like every other
+    // dimension in this API (media width, padding) - see the px/dp TODO in PopupView.
+    val borderColor: String? = null,      // #RRGGBB or #AARRGGBB
+    val borderWidth: Int? = null,         // 0 = no border, also to switch an urgency border off
+    val cornerRadius: Float? = null,      // 0 = square corners
     val showProgress: Boolean = false,    // countdown bar for popups with a finite duration
     val buttons: List<Button> = emptyList(), // DPAD-focusable buttons; pressing one POSTs to callback and dismisses
     val callback: String? = null          // URL that receives {"popup","button","device"} on a button press
@@ -72,7 +78,17 @@ data class PopupProps(
         const val DEFAULT_MESSAGE_SIZE = 12f
         const val DEFAULT_MESSAGE_COLOR = "#ffffff"
         const val DEFAULT_MEDIA_WIDTH = 480
+        const val DEFAULT_BORDER_WIDTH = 4          // a borderColor without a borderWidth
+        const val DEFAULT_BORDER_COLOR = "#ffffff"  // a borderWidth without a borderColor
+        const val DEFAULT_CORNER_RADIUS = 8f        // whenever a border is drawn
 
         val DEFAULT_POSITION: Position = Position.TopRight
+
+        /// urgency shorthand -> border width (px) and color
+        val URGENCY_PRESETS: Map<String, Pair<Int, String>> = mapOf(
+            "info" to (4 to "#2196F3"),
+            "warning" to (6 to "#FF9800"),
+            "critical" to (8 to "#F44336")
+        )
     }
 }

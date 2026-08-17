@@ -14,6 +14,9 @@
          (self-update only, and the signature must match — see UpdateManager). -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Screen on (POST /power?state=on): the wake lock is a best-effort second
+         attempt next to WakeActivity's setTurnScreenOn. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature
             android:name="android.hardware.touchscreen"
@@ -56,6 +59,44 @@
                     android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                     android:value="Displays HTTP-triggered overlay notifications on the TV"/>
         </service>
+
+        <!-- Screen off (POST /power?state=off). Inactive until someone grants it:
+             `adb shell dpm set-active-admin nl.rogro82.pipup/.AdminReceiver` -->
+        <receiver
+                android:name=".AdminReceiver"
+                android:exported="true"
+                android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                    android:name="android.app.device_admin"
+                    android:resource="@xml/device_admin"/>
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- Fallback route for screen off, for devices where lockNow() does not reach
+             standby. Observes nothing (see accessibility_service.xml) and stays dormant
+             until enabled in the accessibility settings. -->
+        <service
+                android:name=".PiPupAccessibilityService"
+                android:exported="true"
+                android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                    android:name="android.accessibilityservice"
+                    android:resource="@xml/accessibility_service"/>
+        </service>
+
+        <!-- Invisible, finishes itself; only exists to turn the screen on. -->
+        <activity
+                android:name=".WakeActivity"
+                android:exported="false"
+                android:excludeFromRecents="true"
+                android:noHistory="true"
+                android:taskAffinity=""
+                android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 
         <activity
                 android:name=".MainActivity"

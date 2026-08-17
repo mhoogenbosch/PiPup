@@ -55,7 +55,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         } else {
             title.text = popup.title
             title.textSize = popup.titleSize
-            title.setTextColor(Color.parseColor(popup.titleColor))
+            title.setTextColor(parseColorOrDefault(popup.titleColor, PopupProps.DEFAULT_TITLE_COLOR))
         }
 
         if(popup.message.isNullOrEmpty()) {
@@ -63,21 +63,27 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         } else {
             message.text = popup.message
             message.textSize = popup.messageSize
-            message.setTextColor(Color.parseColor(popup.messageColor))
+            message.setTextColor(parseColorOrDefault(popup.messageColor, PopupProps.DEFAULT_MESSAGE_COLOR))
         }
 
-        // background with optional urgency border preset
+        // background with an optional border: `urgency` is a shorthand for a
+        // (width, color) pair, and borderColor/borderWidth/cornerRadius each
+        // override their part of it independently.
         background = GradientDrawable().apply {
-            try {
-                setColor(Color.parseColor(popup.backgroundColor))
-            } catch (_: Throwable) {
-                setColor(Color.parseColor(PopupProps.DEFAULT_BACKGROUND_COLOR))
+            setColor(parseColorOrDefault(popup.backgroundColor, PopupProps.DEFAULT_BACKGROUND_COLOR))
+
+            val preset = PopupProps.URGENCY_PRESETS[popup.urgency?.lowercase()]
+            val width = popup.borderWidth ?: preset?.first
+                ?: popup.borderColor?.let { PopupProps.DEFAULT_BORDER_WIDTH }
+            val color = popup.borderColor ?: preset?.second
+                ?: PopupProps.DEFAULT_BORDER_COLOR
+
+            if (width != null && width > 0) {
+                setStroke(width, parseColorOrDefault(color, PopupProps.DEFAULT_BORDER_COLOR))
             }
-            when (popup.urgency?.lowercase()) {
-                "info" -> { setStroke(4, Color.parseColor("#2196F3")); cornerRadius = 8f }
-                "warning" -> { setStroke(6, Color.parseColor("#FF9800")); cornerRadius = 8f }
-                "critical" -> { setStroke(8, Color.parseColor("#F44336")); cornerRadius = 8f }
-            }
+            // rounded corners keep working without a border, and an explicit 0 squares them off
+            cornerRadius = popup.cornerRadius
+                ?: if (width != null && width > 0) PopupProps.DEFAULT_CORNER_RADIUS else 0f
         }
 
         // DPAD-focusable buttons (the service makes the overlay window focusable)
@@ -291,6 +297,15 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
     companion object {
         const val LOG_TAG = "PopupView"
+
+        /// A malformed color must never take the whole popup down: an unparseable
+        /// value falls back instead of throwing out of create().
+        fun parseColorOrDefault(value: String?, fallback: String): Int = try {
+            Color.parseColor(value)
+        } catch (_: Throwable) {
+            Log.w(LOG_TAG, "Unparseable color '$value', using $fallback")
+            Color.parseColor(fallback)
+        }
 
         const val MUTE_JS = """
             (function() {
