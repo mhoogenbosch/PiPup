@@ -43,6 +43,12 @@ streams) on your TV from your home-automation system, for **as long as you want*
   standby, without a second integration for ADB or HDMI-CEC. `/state` publishes what is actually
   possible on this device (`power.canSleep`, `power.sleepMethod`) instead of accepting a request it
   cannot honour. See [Screen on/off](#screen-onoff).
+- **Permission screen with fix buttons** (since 0.8.0) — the status screen on the TV lists every
+  permission with its actual state, and a **Fix** button next to the missing ones that jumps straight
+  to the system screen where it is granted, operable with the remote. `POST /permissions/fix` does
+  the same from a controller (the Home Assistant integration has a button, an action and a
+  self-fixing repair). Where a device has no such screen the app shows the adb command instead — see
+  [Permission screen](#permission-screen).
 - **Permission reporting + installers** (since 0.7.0) — `/state` reports what the app was granted
   (`permissions.overlay`, `installPackages`, vendor `autoStart`, `deviceAdmin`, `accessibility`) and the
   status screen on the TV warns when the overlay permission is missing — until now that failure was
@@ -442,6 +448,47 @@ purely so `GLOBAL_ACTION_LOCK_SCREEN` can be called, and reads nothing from your
 "power": { "canWake": true, "canSleep": true, "sleepMethod": "device_admin" }
 ```
 
+### Permission screen
+
+| Property      | Value                                                    |
+| ------------- | -------------------------------------------------------- |
+| Path:         | /permissions/fix[?what=overlay\|install\|admin\|accessibility\|next] |
+| Method:       | POST                                                     |
+
+Since 0.8.0. Puts the screen that grants a permission in front of the user and wakes the TV first.
+Without `what` it opens PiPup's own status screen, which lists every permission with its own **Fix**
+button; `what=next` jumps to the first missing one.
+
+```json
+{ "what": "overlay", "ok": true, "granted": false, "adb": null }
+```
+
+**The app still cannot grant anything itself** — these are app-ops, which only shell or the system
+may set. What it can do is walk someone holding a remote to the exact spot, which is the part that
+was missing.
+
+Whether that spot exists differs per device, and *asking* is not enough: every Android build must
+resolve these intents to pass Google's compatibility suite, so a plain "is there an activity for
+this?" says yes even where nothing happens. Fire OS answers with `CTSDummyIntentHandler`, Google TV
+with `frameworkpackagestubs.Stubs`. PiPup treats those placeholders as absent, because a button that
+visibly does nothing is worse than no button: `/state` then reports the permission as not fixable,
+`/permissions/fix` answers **501**, and both the TV screen and the reply carry the adb command.
+
+Measured on hardware:
+
+| | Fire OS 9 | Google TV 11 | Android 14 |
+| --- | --- | --- | --- |
+| Overlay permission | adb only | ✓ on screen | ✓ on screen |
+| Self-update permission | ✓ on screen | ✓ on screen | ✓ on screen |
+| Device admin | adb only | not supported by the platform | not supported by the platform |
+| Accessibility | adb only | adb only | ✓ on screen |
+
+`/state` publishes this as `permissions.fixable`, so a controller can show a button only where it
+leads somewhere. Note `deviceAdmin: null` on the last two: those platforms have no device
+administration at all (`hasSystemFeature(FEATURE_DEVICE_ADMIN)` is false) — a different answer from
+"not granted", and worth distinguishing because `dpm set-active-admin` reports `Success` there
+anyway.
+
 ### State
 
 | Property      | Value            |
@@ -467,7 +514,8 @@ Returns the current state as JSON:
   "power": { "canWake": true, "canSleep": true, "sleepMethod": "device_admin" },
   "permissions": {
     "overlay": true, "installPackages": true, "autoStart": null,
-    "deviceAdmin": true, "accessibility": false, "complete": true
+    "deviceAdmin": true, "accessibility": false, "complete": true,
+    "fixable": { "overlay": false, "install": true, "admin": false, "accessibility": false }
   }
 }
 ```

@@ -9,5 +9,16 @@
     <string name="update_available_message">Druk op OK om de update nu te installeren.</string>
     <string name="update_install">Installeren</string>
     <string name="accessibility_service_description">Hiermee kan PiPup het scherm op verzoek uitzetten. Alleen nodig op toestellen waar de apparaatbeheerder dat niet kan; PiPup leest niets van het scherm.</string>
-    <string name="warning_no_overlay">Geen overlay-permissie — popups worden aangenomen maar blijven onzichtbaar. Ken die eenmalig toe via adb:\nadb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow</string>
+    <string name="permission_overlay">Overlay-permissie</string>
+    <string name="permission_install">Zelf-updaten</string>
+    <string name="permission_admin">Scherm uit (apparaatbeheerder)</string>
+    <string name="permission_accessibility">Scherm uit (toegankelijkheid)</string>
+    <string name="permission_line_ok">%1$s: toegekend</string>
+    <string name="permission_line_missing">%1$s: ONTBREEKT</string>
+    <string name="permission_overlay_why">Zonder dit worden popups aangenomen maar blijven ze onzichtbaar.</string>
+    <string name="permission_install_why">Nodig om app-updates zelf te installeren.</string>
+    <string name="permission_admin_why">Nodig om het scherm van deze tv op verzoek uit te zetten.</string>
+    <string name="permission_accessibility_why">Alternatieve route voor scherm uit, voor toestellen zonder apparaatbeheerder.</string>
+    <string name="permission_fix">Repareren</string>
+    <string name="permission_admin_explanation">Wordt alleen gebruikt om het scherm van deze tv op verzoek uit te zetten. Er wordt verder niets beheerd.</string>
 </resources>
