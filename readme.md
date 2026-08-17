@@ -113,6 +113,10 @@ admin (for screen off), `--accessibility` enables the fallback for that, and `--
 handles a differently-signed build that is already installed — note that uninstalling wipes the
 app's stable device id, so Home Assistant sees a new device afterwards.
 
+Sleeping TVs are **left asleep**: the service is started in the background, which does not touch
+what is on screen. On a TCL Google TV use `--wake`, because its vendor guard freezes a service
+started from the background (see below) — there the app has to come up in the foreground.
+
 <details>
 <summary>Doing it by hand</summary>
 

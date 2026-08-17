@@ -28,7 +28,11 @@ param(
     [switch]$Accessibility,
 
     # uninstall first on a signature clash (WARNING: wipes the stable device id)
-    [switch]$ForceUninstall
+    [switch]$ForceUninstall,
+
+    # wake the TV and start the app in the foreground instead of starting the service
+    # in the background; needed on TCL Google TVs, elsewhere it only switches the TV on
+    [switch]$Wake
 )
 
 $ErrorActionPreference = 'Continue'
@@ -154,9 +158,18 @@ foreach ($device in $Devices) {
         }
     }
 
-    # Wake first: on a sleeping/dreaming device an activity start hangs.
-    adb -s $target shell 'input keyevent KEYCODE_WAKEUP' | Out-Null
-    adb -s $target shell "am start-foreground-service -n $Package/.PiPupService" | Out-Null
+    # Deliberately not via the activity by default: a foreground-service start does not
+    # touch what is on screen, while waking a sleeping TV to install an app is exactly
+    # what you do not want on a set of them at once. -Wake is for TCL Google TVs, whose
+    # vendor guard freezes a background-started service; a dreaming device needs the key
+    # event first or `am start` hangs.
+    if ($Wake) {
+        adb -s $target shell 'input keyevent KEYCODE_WAKEUP' | Out-Null
+        adb -s $target shell 'input keyevent KEYCODE_HOME' | Out-Null
+        adb -s $target shell "am start -n $Package/.MainActivity" | Out-Null
+    } else {
+        adb -s $target shell "am start-foreground-service -n $Package/.PiPupService" | Out-Null
+    }
 
     # Verify from this machine: Android TVs have no curl.
     $state = $null

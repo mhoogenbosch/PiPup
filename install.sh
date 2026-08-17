@@ -24,6 +24,7 @@ APK=""
 GRANT_POWER=0
 GRANT_ACCESSIBILITY=0
 FORCE_UNINSTALL=0
+WAKE=0
 DEVICES=()
 
 usage() {
@@ -38,6 +39,10 @@ Options:
   --force-uninstall   uninstall first when the signature differs
                       (WARNING: wipes the app's stable device id, so Home Assistant
                       sees a new device)
+  --wake              wake the TV and start the app in the foreground instead of
+                      starting the service in the background. Needed on TCL Google
+                      TVs, whose vendor guard freezes a background-started service;
+                      elsewhere it just switches the TV on for no reason
   -h, --help          this text
 
 Requires adb on your PATH, and adb debugging enabled on the TV.
@@ -55,6 +60,7 @@ while [ $# -gt 0 ]; do
         --power)            GRANT_POWER=1; shift ;;
         --accessibility)    GRANT_ACCESSIBILITY=1; shift ;;
         --force-uninstall)  FORCE_UNINSTALL=1; shift ;;
+        --wake)             WAKE=1; shift ;;
         -h|--help)          usage; exit 0 ;;
         -*)                 err "unknown option: $1"; usage; exit 2 ;;
         *)                  DEVICES+=("$1"); shift ;;
@@ -168,10 +174,19 @@ for device in "${DEVICES[@]}"; do
         fi
     fi
 
-    # Bring the service up. On a sleeping/dreaming device an activity start hangs, so
-    # wake it first; the service start itself does not touch the foreground.
-    adb -s "$target" shell "input keyevent KEYCODE_WAKEUP" >/dev/null 2>&1
-    adb -s "$target" shell "am start-foreground-service -n $PACKAGE/.PiPupService" >/dev/null 2>&1
+    # Bring the service up. Deliberately NOT via the activity by default: a
+    # foreground-service start does not touch what is on screen, while waking a
+    # sleeping TV to install an app is exactly what you do not want on a set of
+    # them at once. --wake is for TCL Google TVs, where the vendor guard freezes a
+    # service that was started from the background - there the activity path is the
+    # working one, and a dreaming device needs the key event first or `am start` hangs.
+    if [ "$WAKE" -eq 1 ]; then
+        adb -s "$target" shell "input keyevent KEYCODE_WAKEUP" >/dev/null 2>&1
+        adb -s "$target" shell "input keyevent KEYCODE_HOME" >/dev/null 2>&1
+        adb -s "$target" shell "am start -n $PACKAGE/.MainActivity" >/dev/null 2>&1
+    else
+        adb -s "$target" shell "am start-foreground-service -n $PACKAGE/.PiPupService" >/dev/null 2>&1
+    fi
 
     # Verify from this machine rather than from the TV: Android TVs have no curl.
     state=""
