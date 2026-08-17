@@ -138,9 +138,13 @@ foreach ($device in $Devices) {
     }
 
     if ($Power) {
+        # NB: do not trust this command's output. On devices without the device-admin
+        # feature (a fair number of Android TV boxes) `dpm set-active-admin` reports
+        # Success while registering nothing at all - seen on both a Nokia Streaming Box
+        # 8010 and a TCL Google TV. The real check is /state below.
         $admin = (adb -s $target shell "dpm set-active-admin $AdminComponent" 2>&1) -join ' '
         if ($admin -match 'Success|now an active admin') {
-            Write-Ok 'device admin active (screen off available)'
+            Write-Host '  .  device admin requested (verifying below)'
         } else {
             Write-Warn "device admin refused: $admin"
         }
@@ -185,6 +189,15 @@ foreach ($device in $Devices) {
         Write-Ok "running: v$($state.version) on http://${tvHost}:$Port (overlay=$($state.permissions.overlay))"
         if (-not $state.permissions.overlay) {
             Write-Fail 'overlay permission still missing - popups will stay invisible'
+        }
+        if ($Power -or $Accessibility) {
+            if ($state.power.canSleep) {
+                Write-Ok "screen off available via $($state.power.sleepMethod)"
+            } else {
+                Write-Warn 'screen off NOT available: this device has no working device-admin'
+                Write-Warn 'feature (the dpm command reports Success anyway). Re-run with'
+                Write-Warn '-Accessibility to use the fallback route instead.'
+            }
         }
     } else {
         Write-Warn "no answer on http://${tvHost}:$Port/state yet; open the app once on the TV"
