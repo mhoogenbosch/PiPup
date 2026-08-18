@@ -551,3 +551,8 @@ records `id` (the stable device id), `name` and `version`, enabling automatic di
 
 CI builds an APK on every push (see `.github/workflows/build.yml`); tagged releases get the APK
 attached automatically. Locally: JDK 17 + Android SDK 35, then `./gradlew assembleDebug`.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) — every version also has a
+[GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the full story and the APK.
