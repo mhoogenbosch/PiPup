@@ -489,7 +489,68 @@ Measured on hardware:
 | Accessibility | adb only | adb only | ✓ on screen |
 
 `/state` publishes this as `permissions.fixable`, so a controller can show a button only where it
-leads somewhere. Note `deviceAdmin: null` on the last two: those platforms have no device
+leads somewhere.
+
+#### The one case that cannot work remotely
+
+**Without the overlay permission, the fix screen cannot be opened from Home Assistant.** From Android
+10 on, starting an activity from the background is blocked unless the app is exempt, and holding
+`SYSTEM_ALERT_WINDOW` is one of the exemptions — while a foreground service is
+[explicitly not](https://developer.android.com/guide/components/activities/background-starts). So the
+one permission you most want a button for is the one whose absence takes the button away. A blocked
+launch does not even throw: the platform drops it silently.
+
+PiPup therefore checks up front and answers **501** with
+`reason: "Android blocks starting an activity from the background…"` instead of reporting success and
+doing nothing. The way out is a visible window of the app: **open PiPup on the TV** (from the launcher,
+or by tapping its ongoing notification — a notification tap is another exemption) and press the **Fix**
+button on its status screen, which is running in the foreground and therefore allowed. Or grant it over
+adb and never think about it again.
+
+Once the overlay permission *is* granted, everything else — `install`, `accessibility` — opens fine from
+Home Assistant with the app in the background.
+
+### Diagnosing "the fix button does nothing"
+
+| Property      | Value                     |
+| ------------- | ------------------------- |
+| Path:         | /permissions/diagnose     |
+| Method:       | GET (or POST)             |
+
+Since 0.9.0, and the first thing to attach to a bug report — no adb or logcat needed:
+
+```json
+{
+  "sdk": 30,
+  "device": { "model": "Smart TV", "manufacturer": "TCL", "android": "11" },
+  "backgroundLaunchExempt": true,
+  "activityVisible": false,
+  "deviceAdminSupported": false,
+  "screens": {
+    "overlay": {
+      "granted": true,
+      "action": "android.settings.action.MANAGE_OVERLAY_PERMISSION",
+      "resolvedActivity": "com.android.tv.settings.device.apps.specialaccess.SystemAlertActivity",
+      "placeholder": false,
+      "fixable": true,
+      "adb": "adb shell appops set nl.rogro82.pipup SYSTEM_ALERT_WINDOW allow"
+    }
+  },
+  "lastFix": { "what": "overlay", "ok": false, "activity": null, "error": "…", "secondsAgo": 42 }
+}
+```
+
+Read it as: `resolvedActivity` null means nothing handles that intent *or* the platform hides it from
+the app; `placeholder: true` means a vendor stub answered and a button would do nothing;
+`backgroundLaunchExempt: false` means no launch can happen at all right now (see above); and `lastFix`
+says how the previous attempt actually ended. The Home Assistant integration includes this block in its
+diagnostics download.
+
+Note on `resolvedActivity`: from Android 11 on, `resolveActivity()` is a *query* and queries are
+filtered by package visibility, while `startActivity()` is not — "I cannot see it" is not "it is not
+there". The app declares these intents in `<queries>` so it can see them, and treats an unresolved
+intent as worth trying rather than impossible. A device whose `forceQueryable` list omits Settings
+would otherwise hide a perfectly working button (`adb shell dumpsys package queries` shows that list). Note `deviceAdmin: null` on the last two: those platforms have no device
 administration at all (`hasSystemFeature(FEATURE_DEVICE_ADMIN)` is false) — a different answer from
 "not granted", and worth distinguishing because `dpm set-active-admin` reports `Success` there
 anyway.

@@ -699,6 +699,20 @@ class PiPupService : Service(), WebServer.Handler {
         )
     }
 
+    /// GET /permissions/diagnose - why a fix button did or did not appear.
+    ///
+    /// Exists so a bug report can carry facts instead of "it does not work": per
+    /// permission the intent action, which activity resolves it (or nothing), whether that
+    /// activity is a vendor placeholder, and the outcome of the last attempt. Reachable
+    /// without adb, which is the point - the people who hit this are holding a remote.
+    private fun diagnoseResponse(): NanoHTTPD.Response = newFixedLengthResponse(
+        NanoHTTPD.Response.Status.OK,
+        APPLICATION_JSON,
+        Json.writeValueAsString(
+            Permissions.diagnose(this) + mapOf("version" to BuildConfig.VERSION_NAME)
+        )
+    )
+
     /// POST /permissions/fix[?what=overlay|install|admin|accessibility|next]
     ///
     /// Puts the screen that grants a permission in front of the user. An app can never
@@ -733,17 +747,25 @@ class PiPupService : Service(), WebServer.Handler {
         // Check before waking. Switching someone's TV on and then answering "this
         // device cannot show that screen" is the worst of both worlds - seen for real
         // when a failing request from Home Assistant still lit up a TV in another room.
-        if (key != null && Permissions.fixIntent(this, key) == null) {
-            Log.d(LOG_TAG, "Permission fix $key: no screen on this device")
+        val refusal: String? = when {
+            key != null && Permissions.fixIntent(this, key) == null ->
+                "no screen for this permission on this device"
+            // Silently dropped by the platform otherwise - see Permissions.canLaunchActivity
+            !Permissions.canLaunchActivity(this) -> Permissions.BLOCKED_ERROR
+            else -> null
+        }
+        if (refusal != null) {
+            Log.d(LOG_TAG, "Permission fix ${key ?: "app"} refused: $refusal")
             return newFixedLengthResponse(
                 NanoHTTPD.Response.Status.NOT_IMPLEMENTED,
                 APPLICATION_JSON,
                 Json.writeValueAsString(
                     mapOf(
-                        "what" to key,
+                        "what" to (key ?: "app"),
                         "ok" to false,
-                        "granted" to Permissions.granted(this, key),
-                        "adb" to Permissions.adbCommand(key)
+                        "reason" to refusal,
+                        "granted" to key?.let { Permissions.granted(this, it) },
+                        "adb" to key?.let { Permissions.adbCommand(it) }
                     )
                 )
             )
@@ -793,6 +815,7 @@ class PiPupService : Service(), WebServer.Handler {
                 NanoHTTPD.Method.GET -> {
                     when(session.uri) {
                         "/state" -> stateResponse()
+                        "/permissions/diagnose" -> diagnoseResponse()
                         else -> InvalidRequest("unknown uri: ${session.uri}")
                     }
                 }
@@ -814,6 +837,7 @@ class PiPupService : Service(), WebServer.Handler {
                         }
                         "/power" -> powerResponse(session)
                         "/permissions/fix" -> permissionFixResponse(session)
+                        "/permissions/diagnose" -> diagnoseResponse()
                         "/cancel" -> {
                             // optional ?id=<popup id>: only cancel when it matches the visible popup
                             val id = session.parameters["id"]?.firstOrNull()

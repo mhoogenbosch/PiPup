@@ -81,11 +81,16 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // A visible window is what makes the fix buttons work at all: it is one of the
+        // exemptions from the background-activity-launch restriction, and on a TV without
+        // the overlay permission it is the only one available.
+        Permissions.onActivityResumed()
         mHandler.post(mRefresh)
     }
 
     override fun onPause() {
         super.onPause()
+        Permissions.onActivityPaused()
         mHandler.removeCallbacks(mRefresh)
     }
 
