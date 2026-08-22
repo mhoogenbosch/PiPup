@@ -61,11 +61,16 @@ object Permissions {
     fun granted(context: Context, key: String): Boolean? = when (key) {
         KEY_OVERLAY -> overlay(context)
         KEY_INSTALL -> installPackages(context)
-        // null = this platform has no device administration at all, which is a
-        // different answer from "not granted" - see PowerController.deviceAdminSupported
-        KEY_ADMIN -> if (PowerController.deviceAdminSupported(context)) {
-            PowerController.deviceAdminActive(context)
-        } else null
+        // An active admin is proof, and it outranks any feature flag: measured on a Fire
+        // TV stick (AFTKRT, Android 11) that reports FEATURE_DEVICE_ADMIN as absent while
+        // `dumpsys device_policy` lists this app's AdminReceiver as an enabled admin and
+        // lockNow() works. Reporting null there contradicted /state's own sleepMethod.
+        // null therefore means only: not active, and no sign the platform supports it.
+        KEY_ADMIN -> when {
+            PowerController.deviceAdminActive(context) -> true
+            PowerController.deviceAdminSupported(context) -> false
+            else -> null
+        }
         KEY_ACCESSIBILITY -> PiPupAccessibilityService.enabledInSettings(context)
         KEY_AUTO_START -> autoStart(context)
         else -> null
@@ -112,8 +117,10 @@ object Permissions {
                 Uri.parse("package:${context.packageName}")
             )
         } else null
-        KEY_ADMIN -> if (!PowerController.deviceAdminSupported(context)) null
-        else Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+        // No feature-flag gate: the flag is false on devices where admins demonstrably do
+        // register (see granted()), so the honest filter is the placeholder check in
+        // fixIntent() - Fire OS answers this action with CTSDummyDeviceAdminActivity.
+        KEY_ADMIN -> Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, AdminReceiver.component(context))
             putExtra(
                 DevicePolicyManager.EXTRA_ADD_EXPLANATION,

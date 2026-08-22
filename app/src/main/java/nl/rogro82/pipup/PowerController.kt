@@ -32,12 +32,14 @@ object PowerController {
     fun screenOn(context: Context): Boolean =
         (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
 
-    /// Whether this platform has device administration at all.
+    /// Whether this platform claims to have device administration. **A hint, not proof.**
     ///
-    /// Worth asking, because `dpm set-active-admin` happily reports `Success` on devices
-    /// that do not (measured on a Nokia Streaming Box 8010 and a TCL Google TV, both of
-    /// which register nothing). Reporting "not supported" instead of "not granted" keeps
-    /// anyone from chasing a grant that can never stick.
+    /// Measured three ways: a Nokia Streaming Box 8010 and a TCL Google TV report false and
+    /// register nothing (while `dpm set-active-admin` still prints `Success`), a Fire TV
+    /// stick on Fire OS 9 reports true and works - and a Fire TV stick on Fire OS 11
+    /// reports **false while an admin is registered and lockNow() works**. So this only
+    /// answers "is there any sign of support"; whether an admin is active is a separate
+    /// question with a reliable answer ([deviceAdminActive]).
     fun deviceAdminSupported(context: Context): Boolean = try {
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_DEVICE_ADMIN)
     } catch (ex: Throwable) {
