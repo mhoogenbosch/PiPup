@@ -1,5 +1,6 @@
 <resources>
-    <!-- permission panel on the status screen; both readable on the blue background -->
+    <!-- permission panel on the status screen; all readable on the blue background -->
     <color name="warning">#FFD54F</color>
     <color name="ok">#DFF3E3</color>
+    <color name="neutral">#B9D4E2</color>
 </resources>
