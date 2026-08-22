@@ -7,6 +7,20 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.10.0] — 2026-08-22 (status screen: calm, readable, and honest about what is optional)
+All three from one field report (HA forum).
+### Changed
+- **Screen on/off is no longer presented as a problem.** A TV without the power grants showed a
+  permanent yellow *MISSING* with a Fix button — for a feature that is entirely optional — and its
+  owner understandably kept pressing it through disables, enables and reboots. The two power routes
+  (device admin / accessibility) are now ONE calm line: green *configured (via …)* when either route
+  works, neutral *optional, not configured* with a short explanation when neither does. Required
+  permissions (overlay, self-update) keep the loud treatment.
+- **The permission panel starts mid-screen** instead of at the bottom edge: compact logo/status header,
+  and the panel gets the whole lower half, so on most devices nothing needs scrolling.
+- **Bigger text** (18sp headline, 15sp explanation, 14sp adb command — was 14/12/11): this is a
+  10-foot UI and the old sizes were reported as "very difficult to see".
+
 ## [v0.9.1] — 2026-08-19 (device admin: report what is observable)
 ### Fixed
 - `permissions.deviceAdmin` reported `null` on a Fire TV stick (AFTKRT, Android 11) whose admin is

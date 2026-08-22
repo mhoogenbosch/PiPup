@@ -15,14 +15,14 @@
     <string name="accessibility_service_description">Lets PiPup turn the screen off on request. Only needed on devices where the device admin cannot; PiPup reads nothing from the screen.</string>
     <string name="permission_overlay">Overlay permission</string>
     <string name="permission_install">Self-update permission</string>
-    <string name="permission_admin">Screen off (device admin)</string>
-    <string name="permission_accessibility">Screen off (accessibility)</string>
     <string name="permission_line_ok">%1$s: granted</string>
     <string name="permission_line_missing">%1$s: MISSING</string>
     <string name="permission_overlay_why">Popups are accepted but stay invisible without it.</string>
     <string name="permission_install_why">Needed to install app updates by itself.</string>
-    <string name="permission_admin_why">Needed to switch this TV\'s screen off on request.</string>
-    <string name="permission_accessibility_why">Alternative route for screen off, for devices without device admin.</string>
     <string name="permission_fix">Fix</string>
     <string name="permission_admin_explanation">Only used to turn this TV\'s screen off on request. No other policies are applied.</string>
+    <string name="permission_power">Screen on/off</string>
+    <string name="permission_power_set">Screen on/off: configured (via %1$s)</string>
+    <string name="permission_line_optional">%1$s: optional, not configured</string>
+    <string name="permission_power_why">Only needed if you want to switch this TV\'s screen off from your home automation. Popups work fine without it.</string>
 </resources>

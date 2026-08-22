@@ -107,82 +107,109 @@ class MainActivity : Activity() {
     /// Home Assistant - turns green here within two seconds.
     private fun refreshPermissions() {
         val panel = findViewById<LinearLayout>(R.id.permissionsPanel) ?: return
-        val rows = Permissions.FIXABLE_KEYS.mapNotNull { key ->
-            val granted = Permissions.granted(this, key) ?: return@mapNotNull null
-            // Optional grants are only worth screen space when they are missing;
-            // the overlay is always shown, because everything depends on it.
-            if (granted && key != Permissions.KEY_OVERLAY) return@mapNotNull null
-            Triple(key, granted, Permissions.fixIntent(this, key) != null)
+
+        // Required grants first (missing = a real problem, shown loud), then screen
+        // on/off as ONE calm line: it is optional, so it must never look like an error.
+        // Field feedback drove this - a TV without the power grants showed a permanent
+        // yellow MISSING with a Fix button, and its owner understandably kept pressing it.
+        data class Row(
+            val label: String, val ok: Boolean, val optional: Boolean,
+            val why: Int?, val fixKey: String?, val adb: String?
+        )
+
+        val rows = buildList {
+            val overlay = Permissions.granted(this@MainActivity, Permissions.KEY_OVERLAY) == true
+            add(Row(
+                getString(R.string.permission_overlay), overlay, false,
+                R.string.permission_overlay_why.takeIf { !overlay },
+                Permissions.KEY_OVERLAY.takeIf { !overlay },
+                Permissions.adbCommand(Permissions.KEY_OVERLAY).takeIf { !overlay }
+            ))
+            val install = Permissions.granted(this@MainActivity, Permissions.KEY_INSTALL) == true
+            if (!install) add(Row(
+                getString(R.string.permission_install), false, false,
+                R.string.permission_install_why,
+                Permissions.KEY_INSTALL,
+                Permissions.adbCommand(Permissions.KEY_INSTALL)
+            ))
+            val method = PowerController.sleepMethod(this@MainActivity)
+            if (method != null) {
+                add(Row(getString(R.string.permission_power_set, method), true, true, null, null, null))
+            } else {
+                // whichever route has a real screen on this device; adb otherwise
+                val fixKey = listOf(Permissions.KEY_ADMIN, Permissions.KEY_ACCESSIBILITY)
+                    .firstOrNull { Permissions.fixIntent(this@MainActivity, it) != null }
+                add(Row(
+                    getString(R.string.permission_power), false, true,
+                    R.string.permission_power_why, fixKey,
+                    if (fixKey == null) Permissions.adbCommand(Permissions.KEY_ADMIN) else null
+                ))
+            }
         }
 
         // Cheap redraw guard: rebuilding every 2s would fight the DPAD for focus.
-        val signature = rows.joinToString("|") { "${it.first}${it.second}${it.third}" }
+        val signature = rows.joinToString("|") { "${it.label}${it.ok}${it.fixKey}" }
         if (signature == mPermissionSignature) return
         mPermissionSignature = signature
 
         panel.removeAllViews()
-        rows.forEach { (key, granted, fixable) -> panel.addView(permissionRow(key, granted, fixable)) }
+        rows.forEach { row ->
+            panel.addView(permissionRow(row.label, row.ok, row.optional, row.why, row.fixKey, row.adb))
+        }
     }
 
-    private fun permissionRow(key: String, granted: Boolean, fixable: Boolean): View {
+    private fun permissionRow(
+        label: String, ok: Boolean, optional: Boolean,
+        why: Int?, fixKey: String?, adb: String?
+    ): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER_HORIZONTAL
-            setPadding(0, 6, 0, 6)
+            setPadding(0, 10, 0, 10)
         }
 
-        val label = when (key) {
-            Permissions.KEY_OVERLAY -> R.string.permission_overlay
-            Permissions.KEY_INSTALL -> R.string.permission_install
-            Permissions.KEY_ADMIN -> R.string.permission_admin
-            else -> R.string.permission_accessibility
-        }
         row.addView(TextView(this).apply {
-            text = getString(
-                if (granted) R.string.permission_line_ok else R.string.permission_line_missing,
-                getString(label)
-            )
-            textSize = 14f
+            text = when {
+                ok -> if (optional) label else getString(R.string.permission_line_ok, label)
+                optional -> getString(R.string.permission_line_optional, label)
+                else -> getString(R.string.permission_line_missing, label)
+            }
+            // 10-foot UI: field feedback called the old 14sp "very difficult to see"
+            textSize = 18f
             gravity = android.view.Gravity.CENTER_HORIZONTAL
-            // a granted line is reassurance, a missing one is the message: only the
-            // second gets a colour that pulls the eye across the room
-            setTextColor(resources.getColor(if (granted) R.color.ok else R.color.warning))
-            if (!granted) setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(resources.getColor(when {
+                ok -> R.color.ok
+                optional -> R.color.neutral   // optional-and-absent is information, not alarm
+                else -> R.color.warning
+            }))
+            if (!ok && !optional) setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
 
-        if (granted) return row
-
-        row.addView(TextView(this).apply {
-            text = getString(
-                when (key) {
-                    Permissions.KEY_OVERLAY -> R.string.permission_overlay_why
-                    Permissions.KEY_INSTALL -> R.string.permission_install_why
-                    Permissions.KEY_ADMIN -> R.string.permission_admin_why
-                    else -> R.string.permission_accessibility_why
-                }
-            )
-            textSize = 12f
+        if (why != null) row.addView(TextView(this).apply {
+            text = getString(why)
+            textSize = 15f
             gravity = android.view.Gravity.CENTER_HORIZONTAL
         })
 
-        if (fixable) {
+        if (fixKey != null) {
             row.addView(
                 Button(this).apply {
                     text = getString(R.string.permission_fix)
                     isFocusable = true
-                    setOnClickListener { Permissions.launchFix(this@MainActivity, key) }
+                    setOnClickListener { Permissions.launchFix(this@MainActivity, fixKey) }
                 },
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }
             )
-        } else {
+        } else if (adb != null) {
             // no screen on this device: the command is the only honest answer
             row.addView(TextView(this).apply {
-                text = Permissions.adbCommand(key)
-                textSize = 11f
-                setTextIsSelectable(false)
+                text = adb
+                textSize = 14f
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                setTextColor(resources.getColor(R.color.ok))
             })
         }
         return row

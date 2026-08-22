@@ -11,14 +11,14 @@
     <string name="accessibility_service_description">Hiermee kan PiPup het scherm op verzoek uitzetten. Alleen nodig op toestellen waar de apparaatbeheerder dat niet kan; PiPup leest niets van het scherm.</string>
     <string name="permission_overlay">Overlay-permissie</string>
     <string name="permission_install">Zelf-updaten</string>
-    <string name="permission_admin">Scherm uit (apparaatbeheerder)</string>
-    <string name="permission_accessibility">Scherm uit (toegankelijkheid)</string>
     <string name="permission_line_ok">%1$s: toegekend</string>
     <string name="permission_line_missing">%1$s: ONTBREEKT</string>
     <string name="permission_overlay_why">Zonder dit worden popups aangenomen maar blijven ze onzichtbaar.</string>
     <string name="permission_install_why">Nodig om app-updates zelf te installeren.</string>
-    <string name="permission_admin_why">Nodig om het scherm van deze tv op verzoek uit te zetten.</string>
-    <string name="permission_accessibility_why">Alternatieve route voor scherm uit, voor toestellen zonder apparaatbeheerder.</string>
     <string name="permission_fix">Repareren</string>
     <string name="permission_admin_explanation">Wordt alleen gebruikt om het scherm van deze tv op verzoek uit te zetten. Er wordt verder niets beheerd.</string>
+    <string name="permission_power">Scherm aan/uit</string>
+    <string name="permission_power_set">Scherm aan/uit: ingesteld (via %1$s)</string>
+    <string name="permission_line_optional">%1$s: optioneel, niet ingesteld</string>
+    <string name="permission_power_why">Alleen nodig als je het scherm van deze tv vanuit je domotica wilt uitzetten. Popups werken er prima zonder.</string>
 </resources>
