@@ -7,6 +7,17 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.9.1] — 2026-08-19 (device admin: report what is observable)
+### Fixed
+- `permissions.deviceAdmin` reported `null` on a Fire TV stick (AFTKRT, Android 11) whose admin is
+  registered and whose `lockNow()` works — because `hasSystemFeature(FEATURE_DEVICE_ADMIN)` is false
+  there. `/state` then contradicted itself: `power.sleepMethod: "device_admin"` next to
+  `permissions.deviceAdmin: null`. An active admin is proof and now outranks the flag; `null` means
+  only "not active, and no sign the platform supports it".
+- The fix button for device admin no longer hides behind that flag either. Measured, the flag is wrong
+  in both directions (false where admins register, and reported true on Fire OS 9), so the honest
+  filter is the placeholder check that already refuses Fire OS's `CTSDummyDeviceAdminActivity`.
+
 ## [v0.9.0] — 2026-08-19 (diagnose why a fix button did not appear)
 Answer to a field report that the permission fix "does not work". Two causes, both invisible from the
 outside, plus the endpoint to see them.
