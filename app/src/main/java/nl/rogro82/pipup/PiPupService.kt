@@ -460,7 +460,8 @@ class PiPupService : Service(), WebServer.Handler {
         if (!popup.indefinite) {
             mHandler.postDelayed({
                 removePopup(true)
-            }, (popup.duration * 1000).toLong())
+            }, popup.duration * 1000L) // 1000L: an Int*Int product overflows past ~24.8 days
+                                        // and a negative delay removes the popup instantly
         }
     }
 
@@ -862,7 +863,14 @@ class PiPupService : Service(), WebServer.Handler {
                                         // fall back to draining the stream (chunked transfer /
                                         // clients that omit the header would otherwise parse as empty)
 
+                                        // Cap the body BEFORE allocating: this port is open to
+                                        // the whole LAN, and `ByteArray(contentLength)` with an
+                                        // attacker-chosen length is an OOM crash in one request.
+                                        // 256 KB fits any real popup many times over.
                                         val declaredLength = session.headers["content-length"]?.toIntOrNull()
+                                        if (declaredLength != null && declaredLength > MAX_JSON_BODY_BYTES) {
+                                            throw Exception("body too large ($declaredLength bytes, max $MAX_JSON_BODY_BYTES)")
+                                        }
                                         val content = if (declaredLength != null && declaredLength >= 0) {
                                             val buf = ByteArray(declaredLength)
                                             var read = 0
@@ -873,7 +881,18 @@ class PiPupService : Service(), WebServer.Handler {
                                             }
                                             buf
                                         } else {
-                                            session.inputStream.readBytes()
+                                            // chunked/no header: drain with the same ceiling
+                                            val out = java.io.ByteArrayOutputStream()
+                                            val buf = ByteArray(8192)
+                                            while (true) {
+                                                val res = session.inputStream.read(buf)
+                                                if (res < 0) break
+                                                out.write(buf, 0, res)
+                                                if (out.size() > MAX_JSON_BODY_BYTES) {
+                                                    throw Exception("body too large (max $MAX_JSON_BODY_BYTES)")
+                                                }
+                                            }
+                                            out.toByteArray()
                                         }
 
                                         Json.readValue(content, PopupProps::class.java)
@@ -915,12 +934,13 @@ class PiPupService : Service(), WebServer.Handler {
 
                                         val media = when(val image = files["image"]) {
                                             is String -> {
-                                                File(image).absoluteFile.let {
-                                                    val bitmap = BitmapFactory.decodeStream(it.inputStream())
-                                                    val imageWidth = params["imageWidth"]?.toIntOrNull() ?: PopupProps.DEFAULT_MEDIA_WIDTH
-
-                                                    PopupProps.Media.Bitmap(image = bitmap, width = imageWidth)
-                                                }
+                                                // use{}: decodeStream does not close its stream, so
+                                                // every snapshot popup leaked one file descriptor
+                                                val bitmap = File(image).absoluteFile.inputStream()
+                                                    .use { BitmapFactory.decodeStream(it) }
+                                                    ?: throw Exception("could not decode the uploaded image")
+                                                val imageWidth = params["imageWidth"]?.toIntOrNull() ?: PopupProps.DEFAULT_MEDIA_WIDTH
+                                                PopupProps.Media.Bitmap(image = bitmap, width = imageWidth)
                                             }
                                             else -> null
                                         }
@@ -989,6 +1009,7 @@ class PiPupService : Service(), WebServer.Handler {
         const val WEBSERVER_START_ATTEMPTS = 3
         const val WEBSERVER_RETRY_DELAY_MS = 500L
         const val TTS_IDLE_TIMEOUT_MS = 60_000L
+        const val MAX_JSON_BODY_BYTES = 256 * 1024
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"
 

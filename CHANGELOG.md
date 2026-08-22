@@ -7,6 +7,25 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.10.1] — 2026-08-22 (security/robustness audit)
+Full audit of the fork (all findings verified against a concrete failure scenario before fixing).
+### Security
+- **Request bodies are now capped at 256 KB.** `/notify` allocated a buffer of whatever
+  `Content-Length` claimed — one LAN request with a large header (or an unbounded chunked body) was an
+  out-of-memory crash of the service. Verified on hardware: a 900 MB Content-Length now gets HTTP 400
+  and the service stays up.
+### Fixed
+- **Popups longer than ~24.8 days vanished instantly**: the removal delay was computed as `Int * 1000`
+  before widening to `Long`, so it overflowed negative and removed the popup immediately.
+- **A self-update whose on-TV confirmation was never accepted blocked all future updates** until a
+  service restart: the "installing" flag never cleared. It is now a deadline (15 min) — an abandoned
+  attempt can be replaced.
+- **Every snapshot popup leaked one file descriptor** (`BitmapFactory.decodeStream` does not close its
+  stream); a corrupt upload now also gets a clean error instead of a null bitmap.
+- Removed the dead `CONNECTIVITY_CHANGE`/`WIFI_STATE_CHANGED` manifest filters: Android has not
+  delivered those broadcasts to manifest receivers since API 24/26, so the suggested
+  start-on-network-change never happened on any supported device.
+
 ## [v0.10.0] — 2026-08-22 (status screen: calm, readable, and honest about what is optional)
 All three from one field report (HA forum).
 ### Changed

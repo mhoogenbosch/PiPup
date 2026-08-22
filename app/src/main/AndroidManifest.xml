@@ -57,10 +57,12 @@
                 android:name=".Receiver"
                 android:enabled="true"
                 android:exported="true">
+            <!-- CONNECTIVITY_CHANGE / WIFI_STATE_CHANGED used to be here too, but
+                 Android has not delivered those implicit broadcasts to manifest
+                 receivers since API 24/26 - with minSdk 24 they were dead filters
+                 that only suggested a start-on-network-change that never happens. -->
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
-                <action android:name="android.net.wifi.WIFI_STATE_CHANGED" />
             </intent-filter>
             <!-- Sent to this app after its own APK is replaced (self-update, or
                  `adb install -r`). Without it the service stays down after every

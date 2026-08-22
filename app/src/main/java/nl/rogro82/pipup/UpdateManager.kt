@@ -11,7 +11,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /// Self-update from the fork's GitHub releases.
 ///
@@ -29,6 +29,9 @@ object UpdateManager {
         "https://api.github.com/repos/mhoogenbosch/PiPup/releases/latest"
     private const val INSTALL_ACTION = "nl.rogro82.pipup.INSTALL_RESULT"
     private const val NET_TIMEOUT_MS = 15000
+    /// An attempt that has not concluded within this window is considered abandoned
+    /// (typically: the on-TV confirmation was never accepted) and may be replaced.
+    private const val INSTALL_TIMEOUT_MS = 15 * 60 * 1000L
 
     /// Result of the most recent check; read by /state on the web-server thread.
     @Volatile var latestVersion: String? = null
@@ -40,8 +43,17 @@ object UpdateManager {
     @Volatile var lastError: String? = null
         private set
 
-    private val installing = AtomicBoolean(false)
-    val isInstalling: Boolean get() = installing.get()
+    /// 0 = idle; otherwise the elapsedRealtime the current attempt started at. A
+    /// timestamp instead of a boolean, because an attempt can die without its result
+    /// receiver ever firing: pre-Android-12 the system confirmation has to be accepted
+    /// ON the TV, and a dialog nobody accepts (screen off, remote out of reach) used to
+    /// leave the flag stuck true forever - every later install answered "an update is
+    /// already running" until the service restarted. Seen in the field.
+    private val installStartedAt = AtomicLong(0)
+    val isInstalling: Boolean
+        get() = installStartedAt.get().let {
+            it != 0L && android.os.SystemClock.elapsedRealtime() - it < INSTALL_TIMEOUT_MS
+        }
 
     /// True when GitHub advertises a release newer than the running build.
     val updateAvailable: Boolean
@@ -85,7 +97,15 @@ object UpdateManager {
     /// asynchronously in the install receiver).
     fun installLatest(context: Context): String? {
         val url = downloadUrl ?: return "no download URL (run a check first)"
-        if (!installing.compareAndSet(false, true)) return "an update is already running"
+        val now = android.os.SystemClock.elapsedRealtime()
+        val running = installStartedAt.get()
+        if (running != 0L && now - running < INSTALL_TIMEOUT_MS) {
+            return "an update is already running"
+        }
+        // idle, or a stale attempt past its deadline: claim (or steal) the slot
+        if (!installStartedAt.compareAndSet(running, now)) {
+            return "an update is already running"
+        }
 
         return try {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -97,7 +117,7 @@ object UpdateManager {
             if (conn.responseCode != 200) {
                 return "download failed: HTTP ${conn.responseCode}".also {
                     Log.w(LOG_TAG, it)
-                    installing.set(false)
+                    installStartedAt.set(0)
                 }
             }
 
@@ -126,7 +146,7 @@ object UpdateManager {
             Log.i(LOG_TAG, "Update session $sessionId committed for v$latestVersion")
             null
         } catch (ex: Throwable) {
-            installing.set(false)
+            installStartedAt.set(0)
             "install failed: ${ex.message ?: ex.javaClass.simpleName}".also {
                 Log.e(LOG_TAG, it, ex)
             }
@@ -170,13 +190,13 @@ object UpdateManager {
                         }
                         PackageInstaller.STATUS_SUCCESS -> {
                             Log.i(LOG_TAG, "Update installed")
-                            installing.set(false)
+                            installStartedAt.set(0)
                         }
                         else -> {
                             val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                             lastError = "install status $status: $msg"
                             Log.w(LOG_TAG, lastError!!)
-                            installing.set(false)
+                            installStartedAt.set(0)
                         }
                     }
                 }
