@@ -7,6 +7,35 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.9.0] — 2026-08-19 (diagnose why a fix button did not appear)
+Answer to a field report that the permission fix "does not work". Two causes, both invisible from the
+outside, plus the endpoint to see them.
+### Added
+- **`GET /permissions/diagnose`** — per permission the intent action, the activity that resolves it,
+  whether that activity is a vendor placeholder, whether it is fixable and the adb command; plus
+  `sdk`/`device`, `deviceAdminSupported`, `backgroundLaunchExempt`, `activityVisible` and `lastFix`
+  (what the previous attempt did and how it ended). Reachable over HTTP, so a bug report can carry facts
+  instead of a symptom — the people who hit this are holding a remote, not a shell. The Home Assistant
+  integration puts the whole block in its diagnostics download.
+- `<queries>` declarations for the four settings intents.
+### Fixed
+- **A fix requested while the overlay permission was missing did nothing and reported success.** From
+  Android 10 on, starting an activity from the background needs an exemption; holding
+  `SYSTEM_ALERT_WINDOW` is one, a foreground service explicitly is not — so the permission you most
+  want a button for is the one whose absence takes the button away, and the platform drops the launch
+  silently. `/permissions/fix` now checks up front and answers **501** with a `reason` naming the way
+  out: open PiPup on the TV (a visible window is another exemption) and use the button there, or use
+  adb. Verified all three ways on a TCL Google TV.
+- **Working screens were reported as unavailable on some devices.** The placeholder check used
+  `resolveActivity()`, which on Android 11+ is a query and is filtered by package visibility, while
+  `startActivity()` is not. Without `<queries>`, any device whose `forceQueryable` list omits Settings
+  hid a perfectly good button. An unresolved intent now counts as *worth trying*; only a recognised
+  placeholder (`CTSDummy…`, `frameworkpackagestubs…`) is refused. A Google TV here lists 184
+  `forceQueryable` packages including Settings, which is why this never showed up in testing.
+- The "is my window visible" check was a boolean set by `MainActivity`, so the wake step — which
+  launches `WakeActivity` in front of it — made a fix request refuse itself one step before launching.
+  The platform's exemption is per app, so it is now a counter over all activities.
+
 ## [v0.8.1] — 2026-08-17 (don't wake the TV for a fix it cannot show)
 ### Fixed
 - `POST /permissions/fix` woke the TV **before** checking whether the requested screen exists on that
