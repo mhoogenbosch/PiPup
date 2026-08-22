@@ -16,6 +16,18 @@ import android.view.WindowManager
 /// recents and whatever was in the foreground comes straight back.
 class WakeActivity : Activity() {
 
+    override fun onResume() {
+        super.onResume()
+        // Counts towards the background-activity-launch exemption just like any other
+        // window of this app - and it is the window that is up while a fix is launched.
+        Permissions.onActivityResumed()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Permissions.onActivityPaused()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 

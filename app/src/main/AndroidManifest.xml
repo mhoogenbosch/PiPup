@@ -18,6 +18,27 @@
          attempt next to WakeActivity's setTurnScreenOn. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Package visibility (Android 11+): resolveActivity() is a *query* and is filtered,
+         even though startActivity() is not. Without these declarations the app cannot see
+         the settings screens it wants to send the user to, and would report a perfectly
+         working screen as unavailable on any device whose forceQueryable list omits
+         Settings. Measured: a Google TV listed 184 forceQueryable packages (Settings
+         among them), so this stayed invisible during development. -->
+    <queries>
+        <intent>
+            <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.MANAGE_UNKNOWN_APP_SOURCES"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_SETTINGS"/>
+        </intent>
+        <intent>
+            <action android:name="android.app.action.ADD_DEVICE_ADMIN"/>
+        </intent>
+    </queries>
+
     <uses-feature
             android:name="android.hardware.touchscreen"
             android:required="false"/>

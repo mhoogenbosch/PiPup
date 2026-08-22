@@ -9,8 +9,8 @@ android {
         applicationId "nl.rogro82.pipup"
         minSdkVersion 24
         targetSdkVersion 34
-        versionCode 24
-        versionName "0.8.1"
+        versionCode 25
+        versionName "0.9.0"
     }
     compileOptions {
         coreLibraryDesugaringEnabled true
