@@ -25,4 +25,9 @@
     <string name="permission_power_set">Screen on/off: configured (via %1$s)</string>
     <string name="permission_line_optional">%1$s: optional, not configured</string>
     <string name="permission_power_why">Only needed if you want to switch this TV\'s screen off from your home automation. Popups work fine without it.</string>
+    <string name="update_installing_title">Installing PiPup %1$s…</string>
+    <string name="update_installing_message">The app restarts by itself when it is done.</string>
+    <string name="update_confirm_title">PiPup %1$s is ready to install</string>
+    <string name="update_confirm_message">Press OK to open the system\'s install confirmation.</string>
+    <string name="update_done_title">PiPup updated to %1$s</string>
 </resources>
