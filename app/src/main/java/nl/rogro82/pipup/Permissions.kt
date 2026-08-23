@@ -30,11 +30,43 @@ object Permissions {
     /// REQUEST_INSTALL_PACKAGES - needed for the self-update to install its download.
     fun installPackages(context: Context): Boolean = try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.packageManager.canRequestPackageInstalls()
+            context.packageManager.canRequestPackageInstalls().also {
+                mInstallCheckError = null
+            }
         } else true
     } catch (ex: Throwable) {
+        // Remember the failure: a swallowed exception here reports as MISSING and is
+        // indistinguishable from a genuinely revoked permission - diagnose() shows it.
+        mInstallCheckError = "${ex.javaClass.simpleName}: ${ex.message}"
         Log.e(LOG_TAG, "Cannot query install permission: ${ex.message}")
         false
+    }
+
+    @Volatile
+    private var mInstallCheckError: String? = null
+
+    /// Raw app-op mode ("allowed"/"ignored"/"errored"/"default"/...), or why it cannot
+    /// be read. The interesting one is **default**: that is what every reinstall resets
+    /// the op to, and canRequestPackageInstalls() answers false for it on the devices
+    /// measured here - while a Settings screen may still show a friendly toggle. The
+    /// raw mode tells those states apart where the boolean cannot.
+    fun opMode(context: Context, op: String): String = try {
+        val ops = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ops.unsafeCheckOpNoThrow(op, android.os.Process.myUid(), context.packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            ops.checkOpNoThrow(op, android.os.Process.myUid(), context.packageName)
+        }
+        when (mode) {
+            AppOpsManager.MODE_ALLOWED -> "allowed"
+            AppOpsManager.MODE_IGNORED -> "ignored"
+            AppOpsManager.MODE_ERRORED -> "errored"
+            AppOpsManager.MODE_DEFAULT -> "default"
+            else -> "mode $mode"
+        }
+    } catch (ex: Throwable) {
+        "unavailable: ${ex.message}"
     }
 
     /// TCL's vendor app-op that decides whether Android may restart a killed service.
@@ -231,6 +263,17 @@ object Permissions {
             "android" to Build.VERSION.RELEASE
         ),
         "permissions" to asMap(context),
+        // Raw app-op modes: the boolean above collapses "default" (what a reinstall
+        // resets to) and "ignored" into the same false - these do not.
+        "opModes" to mapOf(
+            "installPackages" to opMode(context, "android:request_install_packages"),
+            "overlay" to opMode(context, "android:system_alert_window")
+        ),
+        "installCheckError" to mInstallCheckError,
+        // App-ops are per user: a Settings screen looked at under another profile
+        // (e.g. a kids profile on Google TV) shows that profile's state, not ours.
+        "user" to android.os.Process.myUserHandle().toString(),
+        "targetSdk" to context.applicationInfo.targetSdkVersion,
         // Starting an activity from the background is restricted from Android 10 on, and
         // holding SYSTEM_ALERT_WINDOW is one of the exemptions - so the one case where the
         // overlay permission is missing is also the case where opening its settings screen
