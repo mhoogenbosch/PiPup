@@ -7,6 +7,17 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.10.2] — 2026-08-23 (diagnose: raw app-op modes)
+Field follow-up: a TV whose *Install unknown apps* screen shows **Allowed** while the app reports the
+self-update permission as MISSING. Those two really can disagree, and the boolean could not say why.
+### Added
+- `/permissions/diagnose` now reports the **raw app-op modes** (`opModes`) for the install and overlay
+  grants. The interesting value is `default` — the state every reinstall resets to, for which
+  `canRequestPackageInstalls()` answers **false** on the devices measured here, whatever a Settings
+  toggle may show. Also new: `installCheckError` (a swallowed exception in the check used to be
+  indistinguishable from a revoked permission), `user` (app-ops are per profile — a Settings screen
+  viewed under another profile shows that profile's state) and `targetSdk`.
+
 ## [v0.10.1] — 2026-08-22 (security/robustness audit)
 Full audit of the fork (all findings verified against a concrete failure scenario before fixing).
 ### Security
