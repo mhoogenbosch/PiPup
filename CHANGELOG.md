@@ -7,6 +7,25 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.11.0] — 2026-08-23 (visible updates, and a confirmation that can actually be confirmed)
+Field report: pressing Install in Home Assistant made "a screen flash by" on the TV and then nothing.
+Diagnosed on hardware: on Android < 12 the installer's confirmation dialog, launched blind from a
+background receiver, flashes and vanishes (TCL, Android 11) — the session then waits forever on a
+dialog nobody can reach. On Android 12+ the install is silent and over in seconds, so nothing ever
+acknowledged the button press.
+### Added
+- **"Installing PiPup vX…" popup** (with countdown bar) when an update starts via `POST /update` or
+  the app's own update popup.
+- **Confirmation popup with a button** when the installer demands on-screen confirmation
+  (Android < 12): pressing OK launches the system dialog from a *visible window*, so it keeps focus
+  instead of flashing away. Repeatable — `POST /update` while a confirmation is pending shows the
+  popup again instead of answering "already running".
+- **"PiPup updated to vX" popup** after the app replaced itself (screen on only; suppressed on the
+  very first run of a version that introduces the marker).
+### Notes
+- These flows run in the *new* version, so they become visible from the next update cycle onward —
+  updating *to* 0.11.0 still uses the old, silent code.
+
 ## [v0.10.2] — 2026-08-23 (diagnose: raw app-op modes)
 Field follow-up: a TV whose *Install unknown apps* screen shows **Allowed** while the app reports the
 self-update permission as MISSING. Those two really can disagree, and the boolean could not say why.

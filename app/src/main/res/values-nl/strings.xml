@@ -21,4 +21,9 @@
     <string name="permission_power_set">Scherm aan/uit: ingesteld (via %1$s)</string>
     <string name="permission_line_optional">%1$s: optioneel, niet ingesteld</string>
     <string name="permission_power_why">Alleen nodig als je het scherm van deze tv vanuit je domotica wilt uitzetten. Popups werken er prima zonder.</string>
+    <string name="update_installing_title">PiPup %1$s wordt geïnstalleerd…</string>
+    <string name="update_installing_message">De app herstart vanzelf als het klaar is.</string>
+    <string name="update_confirm_title">PiPup %1$s staat klaar om te installeren</string>
+    <string name="update_confirm_message">Druk op OK om de systeembevestiging te openen.</string>
+    <string name="update_done_title">PiPup bijgewerkt naar %1$s</string>
 </resources>

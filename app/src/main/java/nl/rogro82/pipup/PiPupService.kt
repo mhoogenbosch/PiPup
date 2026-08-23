@@ -85,6 +85,16 @@ class PiPupService : Service(), WebServer.Handler {
         registerNsd()
         startWatchdog()
         startUpdateChecker()
+
+        // Android < 12: the installer wants an on-screen confirmation. Launched blind
+        // from the background that dialog flashes and vanishes; announced as a popup
+        // with a button it works, because the button press gives this app a visible
+        // window and an activity started from one keeps focus.
+        UpdateManager.onPendingUserAction = {
+            mHandler.post { showConfirmInstallPopup() }
+        }
+
+        maybeAnnounceInstalledUpdate()
         // TTS is initialised lazily: the engine is a separate ~100MB process and keeping it
         // bound for the entire service lifetime is the single biggest reason this app gets
         // picked by low-memory killers on 1GB TVs. Popups without `tts` never need it.
@@ -430,6 +440,69 @@ class PiPupService : Service(), WebServer.Handler {
         }, UPDATE_CHECK_FIRST_DELAY_MS)
     }
 
+    /// "Update to vX is being installed" - the visible feedback that pressing Install
+    /// used to lack: on Android 12+ the whole install is silent and over in seconds,
+    /// so nothing on the TV acknowledged the request at all.
+    private fun showInstallingPopup() {
+        val version = UpdateManager.latestVersion ?: return
+        createPopup(
+            PopupProps(
+                duration = 30,
+                id = UPDATE_POPUP_ID,
+                position = PopupProps.Position.BottomRight,
+                title = getString(R.string.update_installing_title, version),
+                message = getString(R.string.update_installing_message),
+                showProgress = true
+            )
+        )
+    }
+
+    /// Popup with a button that (re)launches the system's install confirmation
+    /// (Android < 12). Repeatable: POST /update while a confirmation is pending shows
+    /// it again instead of answering "already running".
+    private fun showConfirmInstallPopup() {
+        val version = UpdateManager.latestVersion ?: return
+        createPopup(
+            PopupProps(
+                duration = 120,
+                id = CONFIRM_POPUP_ID,
+                position = PopupProps.Position.BottomRight,
+                title = getString(R.string.update_confirm_title, version),
+                message = getString(R.string.update_confirm_message),
+                buttons = listOf(
+                    PopupProps.Button("confirm_install", getString(R.string.update_install))
+                )
+            )
+        )
+    }
+
+    /// One-time "updated to vX" popup after the app replaced itself, so an update that
+    /// happened silently (Android 12+) is still visibly acknowledged. Only when the
+    /// screen is on; the version marker is bumped regardless, so it never shows stale.
+    private fun maybeAnnounceInstalledUpdate() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val previous = prefs.getString(PREF_LAST_RUN_VERSION, null)
+        prefs.edit().putString(PREF_LAST_RUN_VERSION, BuildConfig.VERSION_NAME).apply()
+        if (previous == null || previous == BuildConfig.VERSION_NAME) return
+
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!power.isInteractive) return
+        // small delay: right after MY_PACKAGE_REPLACED the window manager is not always
+        // ready for our overlay yet
+        mHandler.postDelayed({
+            if (mCurrentProps == null) {
+                createPopup(
+                    PopupProps(
+                        duration = 10,
+                        id = UPDATE_POPUP_ID,
+                        position = PopupProps.Position.BottomRight,
+                        title = getString(R.string.update_done_title, BuildConfig.VERSION_NAME)
+                    )
+                )
+            }
+        }, 5_000)
+    }
+
     /// Show the "update available" popup at most once per version, and never over a
     /// popup that is already on screen or while the screen is off.
     private fun maybeAnnounceUpdate() {
@@ -550,10 +623,19 @@ class PiPupService : Service(), WebServer.Handler {
                 mPopup = PopupView.build(this, popup)
 
                 mPopup?.onButton = { btn ->
-                    // The app's own update popup is handled locally; it has no
-                    // callback URL and must not be mistaken for a user button.
-                    if ((mCurrentProps ?: popup).id == UPDATE_POPUP_ID) {
+                    // The app's own update popups are handled locally; they have no
+                    // callback URL and must not be mistaken for user buttons.
+                    val shownId = (mCurrentProps ?: popup).id
+                    if (shownId == UPDATE_POPUP_ID) {
+                        mHandler.post { showInstallingPopup() }
                         Thread { UpdateManager.installLatest(this) }.start()
+                    } else if (shownId == CONFIRM_POPUP_ID) {
+                        // Started from a button press = this app has a visible window,
+                        // so the system dialog launches reliably and keeps focus.
+                        UpdateManager.pendingConfirm?.let { confirm ->
+                            runCatching { startActivity(confirm) }
+                                .onFailure { Log.e(LOG_TAG, "Cannot show install prompt", it) }
+                        }
                     } else {
                         // Use the currently shown props, not this closure's `popup`:
                         // an update-in-place reuses the view but can carry a new
@@ -828,13 +910,22 @@ class PiPupService : Service(), WebServer.Handler {
                             // Self-update on request (own popup button, or the Home
                             // Assistant integration's update entity). Runs off the
                             // web-server thread; progress is visible in /state.
-                            Thread {
-                                if (!UpdateManager.updateAvailable) UpdateManager.check()
-                                if (UpdateManager.updateAvailable) {
-                                    UpdateManager.installLatest(this@PiPupService)
-                                }
-                            }.start()
-                            OK("update started")
+                            if (UpdateManager.pendingConfirm != null) {
+                                // A previous attempt is waiting for the on-screen
+                                // confirmation (Android < 12): re-offer it instead of
+                                // answering "already running".
+                                mHandler.post { showConfirmInstallPopup() }
+                                OK("waiting for on-screen confirmation; popup shown again")
+                            } else {
+                                Thread {
+                                    if (!UpdateManager.updateAvailable) UpdateManager.check()
+                                    if (UpdateManager.updateAvailable) {
+                                        mHandler.post { showInstallingPopup() }
+                                        UpdateManager.installLatest(this@PiPupService)
+                                    }
+                                }.start()
+                                OK("update started")
+                            }
                         }
                         "/power" -> powerResponse(session)
                         "/permissions/fix" -> permissionFixResponse(session)
@@ -1000,6 +1091,8 @@ class PiPupService : Service(), WebServer.Handler {
         const val PREF_DEVICE_ID = "device_id"
         const val PREF_UPDATE_ANNOUNCED = "update_announced"
         const val UPDATE_POPUP_ID = "pipup-update"
+        const val CONFIRM_POPUP_ID = "pipup-update-confirm"
+        const val PREF_LAST_RUN_VERSION = "last_run_version"
         // First check shortly after boot (network is usually up by then), then twice a day.
         // GitHub's anonymous API allows 60 requests/hour per IP; this is nowhere near it.
         const val UPDATE_CHECK_FIRST_DELAY_MS = 120_000L

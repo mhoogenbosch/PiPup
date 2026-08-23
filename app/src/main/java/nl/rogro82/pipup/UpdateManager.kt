@@ -50,6 +50,23 @@ object UpdateManager {
     /// leave the flag stuck true forever - every later install answered "an update is
     /// already running" until the service restarted. Seen in the field.
     private val installStartedAt = AtomicLong(0)
+
+    /// The system's install-confirmation intent (Android < 12, or whenever the platform
+    /// insists on one). Kept so it can be re-shown: launched blind from the background
+    /// it flashes on screen and disappears (seen on a TCL, Android 11), leaving the
+    /// session waiting forever on a dialog nobody can reach. The service turns this
+    /// into a popup with a button - a press gives the app a visible window, and an
+    /// activity started from one keeps focus.
+    @Volatile var pendingConfirm: Intent? = null
+        private set
+
+    /// Set by the service; called (on a background thread) when the installer asks for
+    /// on-screen confirmation, so the service can announce it as a popup.
+    @Volatile var onPendingUserAction: (() -> Unit)? = null
+
+    fun clearPendingConfirm() {
+        pendingConfirm = null
+    }
     val isInstalling: Boolean
         get() = installStartedAt.get().let {
             it != 0L && android.os.SystemClock.elapsedRealtime() - it < INSTALL_TIMEOUT_MS
@@ -178,24 +195,30 @@ object UpdateManager {
                         PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE
                     )) {
                         PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                            // Pre-Android-12 (and whenever the system insists): show the
-                            // confirmation dialog on the TV. NEW_TASK because we start it
-                            // from a receiver, not an activity.
+                            // Pre-Android-12 (and whenever the system insists): the user
+                            // has to confirm on the TV. Launching the dialog blind from
+                            // this receiver made it flash and vanish (TCL, Android 11) -
+                            // so keep the intent and let the service offer it as a popup
+                            // with a button; we still try the direct launch as a bonus.
                             @Suppress("DEPRECATION")
                             val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
                             confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            pendingConfirm = confirm
                             runCatching { ctx.startActivity(confirm) }
                                 .onFailure { Log.e(LOG_TAG, "Cannot show install prompt", it) }
+                            runCatching { onPendingUserAction?.invoke() }
                             // Keep `installing` set: the flow is still in progress.
                         }
                         PackageInstaller.STATUS_SUCCESS -> {
                             Log.i(LOG_TAG, "Update installed")
+                            pendingConfirm = null
                             installStartedAt.set(0)
                         }
                         else -> {
                             val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                             lastError = "install status $status: $msg"
                             Log.w(LOG_TAG, lastError!!)
+                            pendingConfirm = null
                             installStartedAt.set(0)
                         }
                     }
