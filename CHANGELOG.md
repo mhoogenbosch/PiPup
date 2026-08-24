@@ -7,6 +7,15 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.12.2] — 2026-08-24 (visible focus on multi-button popups)
+Reported (#18): on a popup with multiple buttons, D-pad navigation worked — the correct button fired —
+but nothing on screen showed which button was focused, so it looked unresponsive.
+### Fixed
+- In an overlay window the platform button background carries no focus state, so moving focus with the
+  remote was invisible. Each button now has an explicit **focused/unfocused background** (a bright fill
+  when focused, a subtle translucent one otherwise) plus a small **scale bump** on focus, and the first
+  button takes focus when the popup appears — so there is a highlight from the start.
+
 ## [v0.12.1] — 2026-08-24 (a remote-initiated update no longer stalls invisibly)
 Field report: pressing Install in Home Assistant for a sleeping Fire TV (Android 9) did nothing visible,
 and afterwards it only said an update was already running.

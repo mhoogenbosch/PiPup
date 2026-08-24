@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.util.Log
 import android.view.Gravity
@@ -86,22 +87,43 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 ?: if (width != null && width > 0) PopupProps.DEFAULT_CORNER_RADIUS else 0f
         }
 
-        // DPAD-focusable buttons (the service makes the overlay window focusable)
+        // DPAD-focusable buttons (the service makes the overlay window focusable).
+        // In an overlay window the platform button background carries no visible
+        // focus state, so D-pad navigation moved focus invisibly - the user pressed
+        // the arrows, saw nothing change and concluded the popup was not interactive
+        // (reported for a 3-button popup on a Shield). Each button gets an explicit
+        // focused/unfocused background plus a small scale bump on focus, and the
+        // first one takes focus so there is an indicator from the start.
         if (popup.buttons.isNotEmpty()) {
             val row = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER
             }
+            var firstButton: Button? = null
             popup.buttons.forEach { btn ->
-                row.addView(Button(context).apply {
+                val button = Button(context).apply {
                     text = btn.label
                     isFocusable = true
+                    isAllCaps = false
+                    setTextColor(Color.WHITE)
+                    setPadding(36, 16, 36, 16)
+                    stateListAnimator = null   // the platform one would fight our scale
+                    background = buttonBackground()
                     setOnClickListener { onButton?.invoke(btn) }
-                }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    setOnFocusChangeListener { v, hasFocus ->
+                        val s = if (hasFocus) 1.12f else 1f
+                        v.animate().scaleX(s).scaleY(s).setDuration(120).start()
+                    }
+                }
+                if (firstButton == null) firstButton = button
+                row.addView(button, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                     setMargins(10, 10, 10, 0)
                 })
             }
             addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            // Give the first button focus once the view is attached, so there is a
+            // visible highlight before the user touches the remote.
+            firstButton?.post { firstButton?.requestFocus() }
         }
 
         // countdown bar for finite durations
@@ -297,6 +319,28 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
     companion object {
         const val LOG_TAG = "PopupView"
+
+        /// Bright fill shown on the focused popup button. White text stays readable on it.
+        val DEFAULT_BUTTON_FOCUS_COLOR = Color.parseColor("#2979FF")
+
+        /// Focus-aware button background: a bright fill when focused, a subtle
+        /// translucent one otherwise — so D-pad navigation is visible in an overlay
+        /// window, where the platform button carries no focus state of its own.
+        fun buttonBackground(): StateListDrawable {
+            fun pill(fill: Int, stroke: Int) = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12f
+                setColor(fill)
+                setStroke(2, stroke)
+            }
+            val focused = pill(DEFAULT_BUTTON_FOCUS_COLOR, Color.WHITE)
+            val normal = pill(Color.parseColor("#33FFFFFF"), Color.parseColor("#66FFFFFF"))
+            return StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), focused)
+                addState(intArrayOf(android.R.attr.state_pressed), focused)
+                addState(intArrayOf(), normal)
+            }
+        }
 
         /// A malformed color must never take the whole popup down: an unparseable
         /// value falls back instead of throwing out of create().
