@@ -7,6 +7,22 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.12.0] — 2026-08-24 (comes back after a silent power-cut boot)
+Field report: after a mains power cut and restore, if the TV boots to standby without being turned on
+and is later woken over ADB, PiPup never starts — the connectivity sensor stays offline until the app
+is opened by hand from the app drawer.
+### Fixed
+- **Root cause:** `BOOT_COMPLETED` — which the app already listens for to restart itself — is only
+  broadcast once the device reaches a fully started, unlocked user session. A TV that boots to standby
+  after a power restore never reaches that point, and waking it over ADB does not re-fire the boot
+  broadcast, so the service stayed down.
+- The boot receiver **and** the service are now `directBootAware` and also listen for
+  **`LOCKED_BOOT_COMPLETED`** (plus `QUICKBOOT_POWERON` for OEM fast-boot). These fire in the early
+  locked-boot phase, before turn-on, so the service starts on a silent power-restore boot too.
+- App preferences (the stable device id and version markers — none of them sensitive) moved to
+  **device-protected storage** so they are readable during direct boot; the existing file is migrated
+  once, so the device id — and therefore the Home Assistant unique_id — stays the same.
+
 ## [v0.11.1] — 2026-08-23 (a Fix button that doesn't lie on locked-down TVs)
 Field report from a TCL Smart TV Pro (Android 11): the self-update permission stayed missing no matter
 what, and the `/permissions/diagnose` output showed why — `opModes.installPackages: "errored"`.
