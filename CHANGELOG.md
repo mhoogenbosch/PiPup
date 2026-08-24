@@ -7,6 +7,17 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.11.1] — 2026-08-23 (a Fix button that doesn't lie on locked-down TVs)
+Field report from a TCL Smart TV Pro (Android 11): the self-update permission stayed missing no matter
+what, and the `/permissions/diagnose` output showed why — `opModes.installPackages: "errored"`.
+### Fixed
+- When an app-op is in a device-**blocked** state (`errored`/`ignored`) — some TVs lock "install
+  unknown apps" for sideloaded apps at the system level, like Samsung's Auto Blocker — the permission
+  screen opens but the toggle will not stick. The app no longer offers a Fix button that leads nowhere:
+  it shows the **adb command with a "this TV blocks it" note** instead (status screen), and
+  `POST /permissions/fix` answers **501** with that reason + command rather than opening a dead screen.
+  A neutral `default` op (the normal case) still gets the on-screen Fix button.
+
 ## [v0.11.0] — 2026-08-23 (visible updates, and a confirmation that can actually be confirmed)
 Field report: pressing Install in Home Assistant made "a screen flash by" on the TV and then nothing.
 Diagnosed on hardware: on Android < 12 the installer's confirmation dialog, launched blind from a

@@ -26,4 +26,6 @@
     <string name="update_confirm_title">PiPup %1$s staat klaar om te installeren</string>
     <string name="update_confirm_message">Druk op OK om de systeembevestiging te openen.</string>
     <string name="update_done_title">PiPup bijgewerkt naar %1$s</string>
+    <string name="permission_install_blocked">Deze tv blokkeert het aanzetten via het instellingenscherm. Ken het toe via adb:</string>
+    <string name="permission_overlay_blocked">Deze tv blokkeert het aanzetten via het instellingenscherm. Ken het toe via adb:</string>
 </resources>

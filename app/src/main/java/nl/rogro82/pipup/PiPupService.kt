@@ -831,6 +831,11 @@ class PiPupService : Service(), WebServer.Handler {
         // device cannot show that screen" is the worst of both worlds - seen for real
         // when a failing request from Home Assistant still lit up a TV in another room.
         val refusal: String? = when {
+            // Device-blocked app-op (errored/ignored): the settings screen exists but the
+            // toggle will not stick (seen on a TCL Smart TV Pro), so adb is the only way.
+            key != null && Permissions.opBlocked(this, key) ->
+                "this device blocks granting this permission from its settings screen; " +
+                    "grant it over adb instead"
             key != null && Permissions.fixIntent(this, key) == null ->
                 "no screen for this permission on this device"
             // Silently dropped by the platform otherwise - see Permissions.canLaunchActivity

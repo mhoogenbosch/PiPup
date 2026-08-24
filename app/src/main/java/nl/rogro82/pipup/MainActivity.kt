@@ -119,19 +119,30 @@ class MainActivity : Activity() {
 
         val rows = buildList {
             val overlay = Permissions.granted(this@MainActivity, Permissions.KEY_OVERLAY) == true
+            val overlayBlocked = !overlay && Permissions.opBlocked(this@MainActivity, Permissions.KEY_OVERLAY)
             add(Row(
                 getString(R.string.permission_overlay), overlay, false,
-                R.string.permission_overlay_why.takeIf { !overlay },
-                Permissions.KEY_OVERLAY.takeIf { !overlay },
+                if (overlay) null
+                else if (overlayBlocked) R.string.permission_overlay_blocked
+                else R.string.permission_overlay_why,
+                Permissions.KEY_OVERLAY.takeIf { !overlay && !overlayBlocked },
                 Permissions.adbCommand(Permissions.KEY_OVERLAY).takeIf { !overlay }
             ))
             val install = Permissions.granted(this@MainActivity, Permissions.KEY_INSTALL) == true
-            if (!install) add(Row(
-                getString(R.string.permission_install), false, false,
-                R.string.permission_install_why,
-                Permissions.KEY_INSTALL,
-                Permissions.adbCommand(Permissions.KEY_INSTALL)
-            ))
+            if (!install) {
+                // A device-blocked op (errored/ignored, e.g. TCL) has a settings screen
+                // that will not stick, so drop the Fix button and show only the adb
+                // command with a "device blocks this" explanation.
+                val installBlocked = Permissions.opBlocked(this@MainActivity, Permissions.KEY_INSTALL)
+                add(Row(
+                    getString(R.string.permission_install),
+                    false, false,
+                    if (installBlocked) R.string.permission_install_blocked
+                    else R.string.permission_install_why,
+                    Permissions.KEY_INSTALL.takeIf { !installBlocked },
+                    Permissions.adbCommand(Permissions.KEY_INSTALL)
+                ))
+            }
             val method = PowerController.sleepMethod(this@MainActivity)
             if (method != null) {
                 add(Row(getString(R.string.permission_power_set, method), true, true, null, null, null))
