@@ -187,9 +187,28 @@ class PiPupService : Service(), WebServer.Handler {
         }
     }
 
+    /// App preferences, kept in *device-protected* storage. The service can start
+    /// during direct boot (LOCKED_BOOT_COMPLETED, before first unlock) on a TV whose
+    /// mains power was restored, and credential-protected prefs are unreadable then.
+    /// None of the keys here are sensitive (device id, version markers). Existing
+    /// installs kept them in the default credential-protected file; move it once so
+    /// the device id — and therefore the Home Assistant unique_id — stays stable.
+    private fun prefs(): android.content.SharedPreferences {
+        val ctx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+            applicationContext.createDeviceProtectedStorageContext() else applicationContext
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+            !ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).contains(PREF_DEVICE_ID)) {
+            // one-time migration from the old location; a no-op once moved, and safe
+            // to skip while credential storage is still locked (the id is regenerated
+            // only if neither file has it, which cannot happen for an existing install)
+            runCatching { ctx.moveSharedPreferencesFrom(applicationContext, PREFS_NAME) }
+        }
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
     /// stable device identifier: generated once, survives app updates (not reinstalls)
     private fun deviceId(): String {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = prefs()
         return prefs.getString(PREF_DEVICE_ID, null) ?: UUID.randomUUID().toString().also {
             prefs.edit().putString(PREF_DEVICE_ID, it).apply()
         }
@@ -480,7 +499,7 @@ class PiPupService : Service(), WebServer.Handler {
     /// happened silently (Android 12+) is still visibly acknowledged. Only when the
     /// screen is on; the version marker is bumped regardless, so it never shows stale.
     private fun maybeAnnounceInstalledUpdate() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = prefs()
         val previous = prefs.getString(PREF_LAST_RUN_VERSION, null)
         prefs.edit().putString(PREF_LAST_RUN_VERSION, BuildConfig.VERSION_NAME).apply()
         if (previous == null || previous == BuildConfig.VERSION_NAME) return
@@ -507,7 +526,7 @@ class PiPupService : Service(), WebServer.Handler {
     /// popup that is already on screen or while the screen is off.
     private fun maybeAnnounceUpdate() {
         val version = UpdateManager.latestVersion ?: return
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = prefs()
         if (prefs.getString(PREF_UPDATE_ANNOUNCED, null) == version) return
 
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
