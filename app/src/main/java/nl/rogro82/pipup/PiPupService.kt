@@ -381,12 +381,21 @@ class PiPupService : Service(), WebServer.Handler {
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun removePopup(removeOverlay: Boolean = false) {
+    private fun removePopup(removeOverlay: Boolean = false, byButton: Boolean = false) {
 
         mHandler.removeCallbacksAndMessages(null)
 
+        val removed = mCurrentProps
         mCurrentProps = null
         mShownAt = 0L
+
+        // The install-confirmation popup (Android < 12) going away without its button
+        // being pressed - it expired, or another popup replaced it - means the user
+        // never confirmed. Release the pending state so /state stops reporting an
+        // install in progress for 15 minutes and the update can be retried.
+        if (!byButton && removed?.id == CONFIRM_POPUP_ID && UpdateManager.pendingUserAction) {
+            UpdateManager.abandonPending()
+        }
 
         // every step guarded: a throwing WebView/VideoView teardown or WindowManager call
         // used to abort the removal halfway, leaving the popup visible on screen while the
@@ -481,6 +490,10 @@ class PiPupService : Service(), WebServer.Handler {
     /// it again instead of answering "already running".
     private fun showConfirmInstallPopup() {
         val version = UpdateManager.latestVersion ?: return
+        // Wake the screen: the confirmation is worthless on a sleeping TV (the system
+        // dialog and this popup would sit on a black screen), and a remote-initiated
+        // update from Home Assistant otherwise stalls invisibly. Field-reported.
+        PowerController.wake(this)
         createPopup(
             PopupProps(
                 duration = 120,
@@ -661,7 +674,9 @@ class PiPupService : Service(), WebServer.Handler {
                         // callback URL, so the captured value would be stale.
                         sendButtonCallback(mCurrentProps ?: popup, btn)
                     }
-                    mHandler.post { removePopup(true) }
+                    // byButton: a confirm-popup dismissed by its own button must keep the
+                    // pending install alive (the system dialog was just launched).
+                    mHandler.post { removePopup(removeOverlay = true, byButton = true) }
                 }
 
                 it.addView(mPopup, FrameLayout.LayoutParams(
@@ -740,6 +755,10 @@ class PiPupService : Service(), WebServer.Handler {
             "available" to UpdateManager.updateAvailable,
             "latest" to UpdateManager.latestVersion,
             "installing" to UpdateManager.isInstalling,
+            // waiting for the on-screen confirmation Android < 12 always demands
+            "pendingUserAction" to UpdateManager.pendingUserAction,
+            // false on Android < 12: an install cannot complete without a remote press
+            "silent" to UpdateManager.silentInstall,
             "checkedSecondsAgo" to UpdateManager.lastCheckedAt.takeIf { it > 0 }
                 ?.let { (System.currentTimeMillis() - it) / 1000 },
             "error" to UpdateManager.lastError

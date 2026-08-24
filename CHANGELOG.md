@@ -7,6 +7,21 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.12.1] — 2026-08-24 (a remote-initiated update no longer stalls invisibly)
+Field report: pressing Install in Home Assistant for a sleeping Fire TV (Android 9) did nothing visible,
+and afterwards it only said an update was already running.
+### Fixed
+- Android < 12 cannot install without an on-screen confirmation (the install permission does not change
+  that). The app already turns that into a popup with a button, but it did **not wake the screen** — so
+  on a sleeping TV the confirmation sat on a black screen and the update stalled invisibly. The app now
+  **wakes the screen** when a confirmation is pending, so one remote press finishes it.
+- The stalled state (`installing: true`) used to linger for 15 minutes after an unconfirmed attempt. The
+  pending install is now **released as soon as its confirmation popup goes away** unconfirmed, so the
+  update can be retried immediately.
+- `/state.update` gained **`pendingUserAction`** (waiting for the on-screen confirmation) and **`silent`**
+  (false on Android < 12, where an install cannot complete without a remote press), so a controller can
+  say "confirm on the TV" instead of a bare "installing".
+
 ## [v0.12.0] — 2026-08-24 (comes back after a silent power-cut boot)
 Field report: after a mains power cut and restore, if the TV boots to standby without being turned on
 and is later woken over ADB, PiPup never starts — the connectivity sensor stays offline until the app

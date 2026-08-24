@@ -67,6 +67,24 @@ object UpdateManager {
     fun clearPendingConfirm() {
         pendingConfirm = null
     }
+
+    /// True while an install is waiting for the on-screen confirmation the platform
+    /// demands on Android < 12 — distinct from actively installing, so a controller
+    /// can say "confirm on the TV" instead of a bare "installing" or "already running".
+    val pendingUserAction: Boolean
+        get() = pendingConfirm != null
+
+    /// Whether a self-update can run without an on-screen confirmation (Android 12+).
+    val silentInstall: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+    /// Give up a stalled attempt (its confirmation popup expired unconfirmed), so
+    /// /state stops reporting an install in progress and the update can be retried.
+    fun abandonPending() {
+        pendingConfirm = null
+        installStartedAt.set(0)
+    }
+
     val isInstalling: Boolean
         get() = installStartedAt.get().let {
             it != 0L && android.os.SystemClock.elapsedRealtime() - it < INSTALL_TIMEOUT_MS
