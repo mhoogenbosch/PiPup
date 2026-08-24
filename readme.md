@@ -47,7 +47,9 @@ streams) on your TV from your home-automation system, for **as long as you want*
   permission with its actual state, and a **Fix** button next to the missing ones that jumps straight
   to the system screen where it is granted, operable with the remote. `POST /permissions/fix` does
   the same from a controller (the Home Assistant integration has a button, an action and a
-  self-fixing repair). Where a device has no such screen the app shows the adb command instead — see
+  self-fixing repair). Where a device has no such screen — or where the permission is one the device
+  actively **blocks** (some TVs lock "install unknown apps" for sideloaded apps at system level, e.g.
+  Samsung's Auto Blocker; since 0.11.1) — the app shows the adb command instead of a dead button. See
   [Permission screen](#permission-screen).
 - **Permission reporting + installers** (since 0.7.0) — `/state` reports what the app was granted
   (`permissions.overlay`, `installPackages`, vendor `autoStart`, `deviceAdmin`, `accessibility`) and the
@@ -63,6 +65,17 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **Restart after an update** (since 0.6.2) — the app listens for `MY_PACKAGE_REPLACED`, so the service
   comes back by itself after a self-update (or an `adb install -r`). Before this, replacing the APK left the
   TV silently offline until something started the service again.
+- **Starts on a silent power-restore boot** (since 0.12.0) — the boot receiver and the service are
+  `directBootAware` and also listen for `LOCKED_BOOT_COMPLETED`, so the service comes up in the early
+  locked-boot phase. `BOOT_COMPLETED` alone is only broadcast once the device reaches an *unlocked*
+  session, which a TV that boots to standby after a mains-power cut may never reach until it is turned
+  on — so before this the app stayed down after a power outage until it was opened by hand. App prefs
+  (device id, version markers) live in device-protected storage so they survive direct boot; the id is
+  migrated in place and stays the same.
+- **Visible updates** (since 0.11.0) — an update started via the Install button (or `POST /update`) shows
+  an "Installing PiPup vX…" popup with a countdown, and where the system demands on-screen confirmation
+  (Android < 12) the app turns that into a popup **with a button** — a press gives the installer the
+  visible window it needs, instead of a confirmation dialog that flashes past and strands the update.
 - **Crash fix: repeated start requests** (since 0.6.1) — `startForeground()` is now called on *every*
   `startForegroundService()` (i.e. also in `onStartCommand`), not only on creation. Without it Android
   killed the process with `RemoteServiceException: Context.startForegroundService() did not then call
@@ -490,6 +503,17 @@ Measured on hardware:
 
 `/state` publishes this as `permissions.fixable`, so a controller can show a button only where it
 leads somewhere.
+
+#### Permissions the device blocks outright
+
+A settings screen that opens but whose toggle **will not stick** is a third case, distinct from a
+missing screen. Some devices lock a permission at system level for sideloaded apps — Samsung's Auto
+Blocker, or a TCL that keeps "install unknown apps" off — which shows up as an app-op stuck in the
+`errored` or `ignored` state (`/permissions/diagnose` reports `opModes`). Since 0.11.1 PiPup treats
+such an op as not fixable on screen: `fixIntent` returns nothing, the status screen shows the adb
+command with a "this TV blocks it from its settings screen" note, and `POST /permissions/fix` answers
+**501** with that reason and the command — rather than opening a screen where nothing happens. A
+neutral `default` op (the normal case) still gets the on-screen Fix button.
 
 #### The one case that cannot work remotely
 
