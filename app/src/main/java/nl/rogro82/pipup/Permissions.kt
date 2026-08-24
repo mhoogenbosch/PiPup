@@ -191,7 +191,30 @@ object Permissions {
     ///   filtered by package visibility on Android 11+, while `startActivity()` is not - so
     ///   "I cannot see it" does not mean "it is not there". Refusing here would hide a
     ///   working button on any device whose forceQueryable list omits Settings.
+    /// The underlying app-op name for a key, or null for keys that are not app-ops
+    /// (device admin, accessibility - those are not appops-gated).
+    private fun opFor(key: String): String? = when (key) {
+        KEY_OVERLAY -> "android:system_alert_window"
+        KEY_INSTALL -> "android:request_install_packages"
+        else -> null
+    }
+
+    /// True when the device has put this permission's app-op into an explicitly denied
+    /// state (`errored` or `ignored`), as opposed to the neutral `default`. Measured on a
+    /// TCL Smart TV Pro (Android 11): REQUEST_INSTALL_PACKAGES sat at `errored`, the
+    /// settings screen opened but the toggle would not stick, and only adb could change
+    /// it. So when this is true, sending the user to the screen is a dead end - the honest
+    /// answer is the adb command.
+    fun opBlocked(context: Context, key: String): Boolean {
+        val op = opFor(key) ?: return false
+        return opMode(context, op) in setOf("errored", "ignored")
+    }
+
     fun fixIntent(context: Context, key: String): Intent? {
+        // A device-blocked op cannot be granted from the settings screen (verified on
+        // TCL: the screen opens, the toggle does not stick), so do not offer a button
+        // that leads nowhere - callers fall back to showing the adb command.
+        if (opBlocked(context, key)) return null
         val intent = rawIntent(context, key) ?: return null
         return if (isPlaceholder(resolvedActivity(context, intent))) null else intent
     }

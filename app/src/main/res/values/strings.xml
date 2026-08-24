@@ -30,4 +30,6 @@
     <string name="update_confirm_title">PiPup %1$s is ready to install</string>
     <string name="update_confirm_message">Press OK to open the system\'s install confirmation.</string>
     <string name="update_done_title">PiPup updated to %1$s</string>
+    <string name="permission_install_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
+    <string name="permission_overlay_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
 </resources>
