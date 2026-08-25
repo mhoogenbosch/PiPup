@@ -17,6 +17,10 @@ data class PopupProps(
     val messageSize: Float = DEFAULT_MESSAGE_SIZE,
     val messageColor: String = DEFAULT_MESSAGE_COLOR,
     val media: Media? = null,
+    // Optional icon shown beside the title/message block (image URL, loaded like media).
+    val icon: String? = null,
+    val iconPosition: String? = null,     // "left" (default) or "right"
+    val iconWidth: Int = DEFAULT_ICON_WIDTH, // pixels
     val tts: String? = null,              // optional text spoken on the device when the popup is (re)shown
     val ttsLanguage: String? = null,      // optional BCP-47 tag (e.g. "nl-NL"); device default when omitted
     val urgency: String? = null,          // info | warning | critical: colored border preset
@@ -78,6 +82,7 @@ data class PopupProps(
         const val DEFAULT_MESSAGE_SIZE = 12f
         const val DEFAULT_MESSAGE_COLOR = "#ffffff"
         const val DEFAULT_MEDIA_WIDTH = 480
+        const val DEFAULT_ICON_WIDTH = 96           // px; icon beside the title/message
         const val DEFAULT_BORDER_WIDTH = 4          // a borderColor without a borderWidth
         const val DEFAULT_BORDER_COLOR = "#ffffff"  // a borderWidth without a borderColor
         const val DEFAULT_CORNER_RADIUS = 8f        // whenever a border is drawn

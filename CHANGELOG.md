@@ -7,6 +7,14 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.13.0] — 2026-08-25 (an icon beside the title and message)
+Requested (#19): show an icon next to the popup's title/message, notification-style.
+### Added
+- Optional **`icon`** field (an image URL, loaded like other media) shown beside the title/message block,
+  with **`iconPosition`** `left` (default) or `right` and **`iconWidth`** (pixels, default 96). Available
+  on both the JSON and multipart `/notify` endpoints. The text now sits in a column next to the icon; the
+  media image stays below, and a media-only popup drops the empty header row.
+
 ## [v0.12.2] — 2026-08-24 (visible focus on multi-button popups)
 Reported (#18): on a popup with multiple buttons, D-pad navigation worked — the correct button fired —
 but nothing on screen showed which button was focused, so it looked unresponsive.

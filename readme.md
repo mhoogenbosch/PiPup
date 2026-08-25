@@ -39,6 +39,8 @@ streams) on your TV from your home-automation system, for **as long as you want*
   popup frame yourself; each field overrides its part of the `urgency` preset, so the preset stays a
   shorthand and `borderWidth: 0` switches its border off again. Also available on uploaded snapshots
   (multipart), which previously ignored `urgency` and `showProgress` entirely.
+- **Icon beside the text** (since 0.13.0) — an optional `icon` (image URL) shown next to the
+  title/message, notification-style, with `iconPosition` (`left`/`right`) and `iconWidth`.
 - **Screen on/off** (since 0.7.0) — `POST /power?state=on|off|toggle` wakes the TV or puts it in
   standby, without a second integration for ADB or HDMI-CEC. `/state` publishes what is actually
   possible on this device (`power.canSleep`, `power.sleepMethod`) instead of accepting a request it
@@ -336,6 +338,20 @@ corners on a plain popup. Sizes are in **pixels**, like every other dimension in
 width, padding) — on a 1080p TV a border of 10 is comfortably visible. An unparseable color falls
 back to the default instead of dropping the popup.
 
+Since 0.13.0 an icon can be shown beside the title/message (notification-style):
+
+```json
+{
+  "icon": "http://your-ha:8123/local/icons/doorbell.png",
+  "iconPosition": "left",
+  "iconWidth": 96
+}
+```
+
+`icon` is an image URL, loaded like the other media. `iconPosition` is `left` (default) or `right`;
+`iconWidth` is in pixels (default 96, aspect ratio preserved). The title and message sit in a column
+next to the icon, and the `media` image (if any) stays below.
+
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.
 - `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical
@@ -372,6 +388,9 @@ Form-fields:
 | borderColor     | String (format=[AA]RRGGBB, since 0.7.0)      |
 | borderWidth     | Integer pixels (since 0.7.0)                 |
 | cornerRadius    | Number pixels (since 0.7.0)                  |
+| icon            | String image URL (since 0.13.0)              |
+| iconPosition    | String left/right (default=left, since 0.13.0) |
+| iconWidth       | Integer pixels (default=96, since 0.13.0)    |
 | showProgress    | Boolean (default=false, since 0.7.0)         |
 
 `position` is an enum ranging from 0 to 4:

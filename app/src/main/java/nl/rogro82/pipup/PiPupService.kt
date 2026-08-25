@@ -1091,6 +1091,10 @@ class PiPupService : Service(), WebServer.Handler {
                                             messageSize = messageSize,
                                             messageColor = messageColor,
                                             media = media,
+                                            icon = params["icon"],
+                                            iconPosition = params["iconPosition"],
+                                            iconWidth = params["iconWidth"]?.toIntOrNull()
+                                                ?: PopupProps.DEFAULT_ICON_WIDTH,
                                             tts = params["tts"],
                                             ttsLanguage = params["ttsLanguage"],
                                             // styling also applies to uploaded snapshots
