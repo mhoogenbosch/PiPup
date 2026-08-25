@@ -46,13 +46,15 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         val title = findViewById<TextView>(R.id.popup_title)
         val message = findViewById<TextView>(R.id.popup_message)
         val frame = findViewById<FrameLayout>(R.id.popup_frame)
+        val header = findViewById<LinearLayout>(R.id.popup_header)
+        val textcol = findViewById<LinearLayout>(R.id.popup_textcol)
 
         if(popup.media == null) {
             removeView(frame)
         }
 
         if(popup.title.isNullOrEmpty()) {
-            removeView(title)
+            textcol.removeView(title)
         } else {
             title.text = popup.title
             title.textSize = popup.titleSize
@@ -60,11 +62,34 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         }
 
         if(popup.message.isNullOrEmpty()) {
-            removeView(message)
+            textcol.removeView(message)
         } else {
             message.text = popup.message
             message.textSize = popup.messageSize
             message.setTextColor(parseColorOrDefault(popup.messageColor, PopupProps.DEFAULT_MESSAGE_COLOR))
+        }
+
+        // Optional icon beside the text block, left (default) or right. Loaded like
+        // any other image; adjustViewBounds keeps its aspect ratio at the given width.
+        if (!popup.icon.isNullOrEmpty()) {
+            val onRight = popup.iconPosition.equals("right", ignoreCase = true)
+            val iconView = findViewById<ImageView>(
+                if (onRight) R.id.popup_icon_right else R.id.popup_icon_left
+            )
+            iconView.layoutParams = (iconView.layoutParams as LinearLayout.LayoutParams).apply {
+                width = popup.iconWidth
+                height = LayoutParams.WRAP_CONTENT
+            }
+            iconView.visibility = View.VISIBLE
+            // override(): the view's height is WRAP_CONTENT, which Glide would otherwise
+            // decode at screen size; bound it to the icon width (adjustViewBounds keeps
+            // the aspect ratio on display).
+            Glide.with(context).load(popup.icon).override(popup.iconWidth).into(iconView)
+        }
+
+        // Nothing left in the header (media-only popup) -> drop the empty row.
+        if (textcol.childCount == 0 && popup.icon.isNullOrEmpty()) {
+            removeView(header)
         }
 
         // background with an optional border: `urgency` is a shorthand for a

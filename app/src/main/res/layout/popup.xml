@@ -7,15 +7,52 @@
             android:paddingBottom="3dp"
             android:paddingTop="3dp">
     </FrameLayout>
-    <TextView
+
+    <!-- Title/message with an optional icon beside them (left or right).
+         Both ImageViews are gone until an icon URL is supplied. -->
+    <LinearLayout
+            android:id="@+id/popup_header"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:id="@+id/popup_title"
-            android:textSize="30sp"
-            android:textStyle="bold"/>
-    <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:id="@+id/popup_message" android:textSize="24sp"
-    />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+        <ImageView
+                android:id="@+id/popup_icon_left"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp"
+                android:adjustViewBounds="true"
+                android:visibility="gone"
+                android:contentDescription="@null"/>
+
+        <LinearLayout
+                android:id="@+id/popup_textcol"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+            <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:id="@+id/popup_title"
+                    android:textSize="30sp"
+                    android:textStyle="bold"/>
+            <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:id="@+id/popup_message" android:textSize="24sp"
+            />
+        </LinearLayout>
+
+        <ImageView
+                android:id="@+id/popup_icon_right"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:adjustViewBounds="true"
+                android:visibility="gone"
+                android:contentDescription="@null"/>
+    </LinearLayout>
 </merge>
