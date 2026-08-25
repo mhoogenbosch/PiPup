@@ -143,7 +143,7 @@ started from the background (see below) — there the app has to come up in the 
 > install (a platform limit — see [self-update](#what-this-fork-adds-compared-to-rogro82pipup)). A
 > **shell**-initiated `adb install -r`, which is what `install.sh` does, has no confirmation on any
 > Android version. Run it on a schedule (cron, or a Home Assistant `shell_command`) to keep older TVs
-> updated with no interaction — the [ha-pipup readme](https://github.com/mhoogenbosch/ha-pipup#the-update-button-is-silent-only-on-android--12)
+> updated with no interaction — the [ha-pipup readme](https://github.com/mhoogenbosch/ha-pipup#the-update-button-is-silent-only-on-android-12)
 > has a ready-made automation.
 
 <details>
