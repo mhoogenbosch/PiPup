@@ -92,8 +92,8 @@ streams) on your TV from your home-automation system, for **as long as you want*
   `update` in `/state`, and accepts `POST /update` to trigger the update (used by the Home Assistant
   integration's update entity). Android only accepts an APK signed with the same key, so a tampered
   download can never replace the app. On **Android 12+** the self-update is silent; on older devices the
-  system shows its install confirmation on the TV, which someone has to accept with the remote.
-  Grant the install permission once (survives updates, not reinstalls):
+  system shows its install confirmation on the TV, which someone has to accept with the remote (see the
+  limitation below). Grant the install permission once (survives updates, not reinstalls):
   `adb shell appops set nl.rogro82.pipup REQUEST_INSTALL_PACKAGES allow`
 - WebView media supports JavaScript, DOM storage and unattended (autoplay) playback, and cleartext
   (http) LAN URLs are allowed — required for camera streams from e.g. go2rtc/Frigate.
@@ -137,6 +137,14 @@ app's stable device id, so Home Assistant sees a new device afterwards.
 Sleeping TVs are **left asleep**: the service is started in the background, which does not touch
 what is on screen. On a TCL Google TV use `--wake`, because its vendor guard freezes a service
 started from the background (see below) — there the app has to come up in the foreground.
+
+> **This is also the way to update Android < 12 TVs silently.** The in-app self-update installs silently
+> only on Android 12+; on older devices the OS forces an on-screen confirmation for any *app*-initiated
+> install (a platform limit — see [self-update](#what-this-fork-adds-compared-to-rogro82pipup)). A
+> **shell**-initiated `adb install -r`, which is what `install.sh` does, has no confirmation on any
+> Android version. Run it on a schedule (cron, or a Home Assistant `shell_command`) to keep older TVs
+> updated with no interaction — the [ha-pipup readme](https://github.com/mhoogenbosch/ha-pipup#the-update-button-is-silent-only-on-android--12)
+> has a ready-made automation.
 
 <details>
 <summary>Doing it by hand</summary>
