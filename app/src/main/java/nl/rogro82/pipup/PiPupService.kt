@@ -605,9 +605,14 @@ class PiPupService : Service(), WebServer.Handler {
             // create or reuse the current overlay; the window is only focusable when the
             // popup carries buttons (otherwise it must never steal the remote from the TV app)
 
+            @Suppress("DEPRECATION")
             val layoutFlags: Int = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                else -> WindowManager.LayoutParams.TYPE_TOAST
+                // Android 6/7 (< O): TYPE_SYSTEM_ALERT draws over other apps with the
+                // SYSTEM_ALERT_WINDOW permission (which PiPup is granted) and can take
+                // input focus, so buttons still work. TYPE_TOAST would show but never
+                // focus, and was restricted from 7.1 on.
+                else -> WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
             }
 
             val windowFlags = if (popup.buttons.isNotEmpty())
