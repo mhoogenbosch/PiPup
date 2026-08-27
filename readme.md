@@ -103,6 +103,29 @@ streams) on your TV from your home-automation system, for **as long as you want*
 [mhoogenbosch/ha-pipup](https://github.com/mhoogenbosch/ha-pipup) — with a config flow per TV,
 a popup binary sensor and `pipup.show` / `pipup.dismiss` actions (including camera entities).
 
+## Supported devices
+
+**Minimum: Android 6.0.1 (API 23).** Built for Android TV / Fire TV, but since 0.14.0 it also
+installs on plain-Android devices (projectors, TV boxes) and gets a normal launcher icon there.
+
+Everything core works on **every** supported version — popups (text, image, video, web, camera),
+muted media, TTS, remote-operable buttons, countdown bar, urgency/border styling, the icon beside the
+text, `/state`, `/notify`, `/cancel`, mDNS discovery, the overlay watchdog, and turning the screen
+**on**. A few things depend on the Android version:
+
+| Capability | Works on |
+|---|---|
+| Popups, TTS, buttons, styling, `/state`, screen **on** | **6.0.1+** (all) |
+| Overlay rendering | 6–7 via `TYPE_SYSTEM_ALERT` (needs the overlay app-op — the installer grants it); 8+ via `TYPE_APPLICATION_OVERLAY` |
+| Screen **off** (`POST /power?state=off`) | any version, after a one-time device-admin **or** accessibility grant (`--power` / `--accessibility`); which route works depends on the device |
+| **Silent** self-update | **12+** only. On older devices the update still works but the system shows an install confirmation the app wakes the screen for and turns into a popup with a button — one press on the remote finishes it (see [the limitation](https://github.com/mhoogenbosch/ha-pipup#the-update-button-is-silent-only-on-android-12)) |
+| Restart after a **silent power-restore boot** (`LOCKED_BOOT_COMPLETED`) | **7.0+** (direct boot). On Android 6 there is no direct boot, so a restart relies on the normal `BOOT_COMPLETED` — fine on a TV/projector without a lock screen |
+| `specialUse` foreground-service type | 14+ (cosmetic; older run a normal foreground service) |
+
+> **Android 6 is not hardware-tested by the maintainer** (no API 23 device on hand) — the code paths
+> are version-guarded and the APK builds and runs without regression on the Android 9+ fleet, but if
+> you hit something on a 6.0.1 device please open an issue with the `/permissions/diagnose` output.
+
 ## Installation (sideloading)
 
 ### Prerequisite: enable ADB debugging on the TV
