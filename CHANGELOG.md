@@ -7,6 +7,22 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.14.0] — 2026-08-27 (runs on Android 6.0.1 / API 23)
+Reported: install failed with `INSTALL_FAILED_OLDER_SDK` on projectors running Android 6.0.1.
+### Changed
+- **`minSdk` lowered from 24 to 23**, so the app installs on Android 6.0.1 (API 23) — e.g. the
+  Android that ships on many projectors.
+- **Overlay window type on Android < 8** now uses `TYPE_SYSTEM_ALERT` (draws over other apps with the
+  overlay permission and can take input focus, so buttons work) instead of `TYPE_TOAST` (shows but
+  never focuses, and was restricted from Android 7.1). No effect on Android 8+ devices, which use
+  `TYPE_APPLICATION_OVERLAY`.
+- **`leanback` feature is no longer required** and the launcher activity also declares the normal
+  `LAUNCHER` category, so plain-Android devices (not just Android TV) install it and get an icon.
+
+The rest of the code was already version-guarded (foreground service, notification channel, screen
+wake via the pre-8.1 window flags, direct-boot prefs, self-update). Verified to build; runtime on
+Android 6 depends on the device.
+
 ## [v0.13.0] — 2026-08-25 (an icon beside the title and message)
 Requested (#19): show an icon next to the popup's title/message, notification-style.
 ### Added

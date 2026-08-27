@@ -42,9 +42,11 @@
     <uses-feature
             android:name="android.hardware.touchscreen"
             android:required="false"/>
+    <!-- Not required: also runs on plain-Android devices (e.g. Android 6 projectors),
+         not only Android TV. required="false" keeps it installable/visible there. -->
     <uses-feature
             android:name="android.software.leanback"
-            android:required="true"/>
+            android:required="false"/>
 
     <application
             android:allowBackup="true"
@@ -145,7 +147,10 @@
                 android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
+                <!-- LEANBACK_LAUNCHER for Android TV; LAUNCHER so plain-Android
+                     devices (projectors) also get a launcher icon. -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
     </application>
