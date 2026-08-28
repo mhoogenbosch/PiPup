@@ -7,6 +7,16 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.14.2] — 2026-08-28 (no crash on a failing direct video_url / RTSP stream)
+Field report (Android 6.0.1 projector): a direct `video_url: "rtsp://…"` crashed the app instantly.
+### Fixed
+- `VideoView` shows its built-in "Can't play this video" `AlertDialog` on any playback error or stall
+  (common with direct `rtsp://` URLs). This overlay runs from a `Service` with no activity window
+  token, so `Dialog.show()` threw `WindowManager$BadTokenException` and crashed the app. Added an
+  `OnErrorListener` that returns `true` (error handled → no dialog), so a failing/stalling stream can
+  no longer crash PiPup — the popup just stays hidden and is removed by its own duration timer.
+  Affects any Android version; surfaced by a direct RTSP stream.
+
 ## [v0.14.1] — 2026-08-28 (fix Android 6/7 crash on first request)
 Field report: on Android 6.0.1 the app crashed at the first HTTP request with
 `NoClassDefFoundError: java.lang.BootstrapMethodError` from inside Jackson's `ObjectMapper`.

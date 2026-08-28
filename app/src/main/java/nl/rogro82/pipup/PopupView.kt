@@ -193,6 +193,15 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
             mVideoView = VideoView(context).apply {
                 setVideoURI(Uri.parse(media.uri))
+                // Suppress VideoView's built-in "Can't play this video" AlertDialog. It is shown
+                // on any playback error or stall (common with direct rtsp:// URLs), but this overlay
+                // runs from a Service with no activity window token, so Dialog.show() throws
+                // BadTokenException and crashes the app. Returning true marks the error handled, so
+                // no dialog is shown; the popup stays hidden and is removed by its own duration timer.
+                setOnErrorListener { _, what, extra ->
+                    Log.w(LOG_TAG, "VideoView error (what=$what extra=$extra) for ${media.uri} — suppressing dialog")
+                    true
+                }
                 setOnPreparedListener {
                     if (media.muted) {
                         it.setVolume(0f, 0f)
