@@ -7,6 +7,16 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.14.1] — 2026-08-28 (fix Android 6/7 crash on first request)
+Field report: on Android 6.0.1 the app crashed at the first HTTP request with
+`NoClassDefFoundError: java.lang.BootstrapMethodError` from inside Jackson's `ObjectMapper`.
+### Fixed
+- `java.lang.BootstrapMethodError` only exists from Android 8.0 (API 26). Jackson references it in
+  `ExceptionUtil` from **2.14.0** onward, so `ObjectMapper` fails to load on API 23–25 and crashes the
+  request thread (`/state`, `/notify`, …) — which made v0.14.0 unusable on the very Android 6 devices it
+  was meant to support. **Jackson pinned back to 2.13.5** (the last line without that reference);
+  `kotlin-reflect` pinned to the project Kotlin version so it matches the stdlib. No API change.
+
 ## [v0.14.0] — 2026-08-27 (runs on Android 6.0.1 / API 23)
 Reported: install failed with `INSTALL_FAILED_OLDER_SDK` on projectors running Android 6.0.1.
 ### Changed
