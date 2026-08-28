@@ -7,6 +7,21 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.14.3] — 2026-08-28 (self-update installs the newest release, not the last-checked one)
+Field report: a TV running v0.13.0 was asked to update while v0.14.2 was out, and installed v0.14.0.
+### Fixed
+- The `/update` endpoint skipped its GitHub check whenever the **cached** release tag was already
+  newer than the running build (`if (!UpdateManager.updateAvailable) UpdateManager.check()`).
+  `installLatest()` then used the `downloadUrl` that the previous check had cached, so a cache from
+  before a newer release handed the installer that older APK. The skip only pays off while the cache
+  is fresh — which it is precisely *not* on a TV that has been behind for a while, and that is the
+  one case where this endpoint gets used. **The check now always runs on an install request.** A
+  failed check (offline, GitHub's anonymous 60/h rate limit) leaves the previous cache untouched, so
+  it still falls back to a known older release rather than doing nothing.
+- `UpdateManager.installLatest()` now documents that it installs the last *checked* release rather
+  than whatever is newest on GitHub at that moment — the name suggests otherwise and that is what
+  made the behaviour above easy to miss.
+
 ## [v0.14.2] — 2026-08-28 (no crash on a failing direct video_url / RTSP stream)
 Field report (Android 6.0.1 projector): a direct `video_url: "rtsp://…"` crashed the app instantly.
 ### Fixed

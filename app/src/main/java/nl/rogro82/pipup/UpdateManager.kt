@@ -127,7 +127,14 @@ object UpdateManager {
     }
 
     /// Download the release APK and hand it to the package installer. Blocking —
-    /// call from a background thread. Returns an error message, or null on success
+    /// call from a background thread.
+    ///
+    /// NB despite the name this installs the LAST CHECKED release, not whatever is
+    /// newest on GitHub right now: it uses the `downloadUrl` that [check] cached.
+    /// Callers that act on a user request must call [check] first, or they can hand
+    /// the installer a stale APK.
+    ///
+    /// Returns an error message, or null on success
     /// (success here means "handed to the installer": the actual result arrives
     /// asynchronously in the install receiver).
     fun installLatest(context: Context): String? {

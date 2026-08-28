@@ -966,7 +966,18 @@ class PiPupService : Service(), WebServer.Handler {
                                 OK("waiting for on-screen confirmation; popup shown again")
                             } else {
                                 Thread {
-                                    if (!UpdateManager.updateAvailable) UpdateManager.check()
+                                    // Always re-check first. `updateAvailable` compares the
+                                    // CACHED tag with the running build, so a cache from before
+                                    // a newer release still reads as "an update is available" --
+                                    // and installLatest() would then install that older APK from
+                                    // its cached downloadUrl. Skipping the check is only safe
+                                    // while the cache is fresh, which it is precisely not on a TV
+                                    // that has been behind for a while. Seen in the field: 0.13.0
+                                    // with 0.14.0 cached installed 0.14.0 while 0.14.2 was out.
+                                    // A failed check (offline, GitHub rate limit) leaves the
+                                    // previous cache untouched, so this still falls back to a
+                                    // known older release instead of doing nothing.
+                                    UpdateManager.check()
                                     if (UpdateManager.updateAvailable) {
                                         mHandler.post { showInstallingPopup() }
                                         UpdateManager.installLatest(this@PiPupService)
