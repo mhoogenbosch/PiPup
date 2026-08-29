@@ -9,8 +9,8 @@ android {
         applicationId "nl.rogro82.pipup"
         minSdkVersion 23
         targetSdkVersion 34
-        versionCode 41
-        versionName "0.15.1"
+        versionCode 42
+        versionName "0.16.0"
     }
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -71,11 +71,12 @@ dependencies {
 
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
 
-    // ExoPlayer (media3) — used ONLY for rtsp:// video_url. Android's stock VideoView/MediaPlayer
-    // cannot reliably play RTSP (fails with MEDIA_ERROR_UNKNOWN); ExoPlayer's RTSP module can, and
-    // supports TCP interleaving. Kept off the default video path (http/HLS/camera_entity stays on
-    // VideoView), and the classes only load when an rtsp URL is actually shown — so no impact on
-    // other popups or on Android 6 devices that never use rtsp. minSdk 21, safe for our minSdk 23.
+    // ExoPlayer (media3) — ALL video_url playback (rtsp, HLS, progressive http), rendered into a
+    // TextureView. Replaces the stock VideoView, whose SurfaceView sat on the hardware video
+    // overlay plane and showed nothing while another app was playing video (see PopupView.Video).
+    // minSdk 21, safe for our minSdk 23.
     implementation 'androidx.media3:media3-exoplayer:1.5.1'
     implementation 'androidx.media3:media3-exoplayer-rtsp:1.5.1'
+    // HLS (.m3u8) — what camera_mode: stream and most camera/NVR video_url's hand us.
+    implementation 'androidx.media3:media3-exoplayer-hls:1.5.1'
 }
