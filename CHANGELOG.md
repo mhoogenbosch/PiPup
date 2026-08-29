@@ -7,6 +7,23 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.18.0] — 2026-08-29 (seen over the screensaver; optional notification sound)
+Requested (#34): popups were invisible while the Android TV screensaver / ambient mode was showing, and a
+chime would help draw attention when someone is at the door.
+### Added
+- **Screensaver handling.** Measured on a Google TV (Android 11) the overlay actually sits *above* the
+  `DreamActivity` and is visible — but on other builds the dream layer is higher, and Android 12+ lets a
+  dream hide all app overlays (`setHideOverlayWindows`). An app cannot raise its own z-order, so the fix that
+  works everywhere is to **end the screensaver when a popup arrives** (the same wake path as `POST /power`),
+  so the popup shows on whatever was behind it. The service tracks `DREAMING_STARTED/STOPPED`; `/state`
+  reports `dreaming`. New field **`dismissScreensaver`** (default `true`; `false` keeps the screensaver).
+- **`sound`** (optional): `"default"` plays a built-in short chime, any other value is a URL/URI of an audio
+  clip; **`soundVolume`** (0–1) scales it. Played once when a popup is newly built — an update-in-place of the
+  same popup does **not** replay it (a motion popup re-notified every few seconds would otherwise ding
+  constantly). Transient audio focus with ducking: the TV's audio dips and comes back. Like TTS this opens
+  an audio path, and some Fire TVs renegotiate HDMI audio briefly when that happens — hence opt-in.
+  `/state.lastPopup.sound` tells whether a sound was requested. Both fields also accepted on multipart.
+
 ## [v0.17.2] — 2026-08-29 (software video decoding where the hardware decoder breaks the TV's own picture)
 Field report (Xiaomi laser projector, Android 6.0.1, Amlogic): text and snapshot popups were harmless, but
 closing a **live video popup froze the HDMI source** behind it — logcat showed the Amlogic hardware decoder
