@@ -17,6 +17,13 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.ui.PlayerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 
@@ -180,7 +187,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     }
 
     private class Video(context: Context, popup: PopupProps, val media: PopupProps.Media.Video): PopupView(context, popup) {
-        private lateinit var mVideoView: VideoView
+        private var mVideoView: VideoView? = null
+        private var mExoPlayer: ExoPlayer? = null
 
         init { create() }
 
@@ -191,6 +199,51 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
             val frame = findViewById<FrameLayout>(R.id.popup_frame)
 
+            // rtsp:// goes through ExoPlayer (stock VideoView/MediaPlayer can't play RTSP reliably —
+            // it fails with MEDIA_ERROR_UNKNOWN). Everything else keeps the existing VideoView path,
+            // and the ExoPlayer/media3 classes only load when an rtsp URL is actually shown.
+            val uri = media.uri
+            if (uri.startsWith("rtsp://", ignoreCase = true) || uri.startsWith("rtsps://", ignoreCase = true)) {
+                createRtsp(frame, uri)
+            } else {
+                createVideoView(frame)
+            }
+        }
+
+        /// ExoPlayer path for rtsp://. Forces RTP-over-TCP: UDP interleave is frequently blocked or
+        /// unreliable on Wi-Fi, and most IP cameras / RTSP servers support TCP. Errors are logged
+        /// (ExoPlayer shows no system dialog, so a failing stream cannot crash us); the popup is
+        /// revealed on the first rendered frame and removed by its own duration timer otherwise.
+        @UnstableApi
+        private fun createRtsp(frame: FrameLayout, uri: String) {
+            val playerView = PlayerView(context).apply {
+                useController = false
+                layoutParams = FrameLayout.LayoutParams(media.width, LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER
+                }
+            }
+            val source = RtspMediaSource.Factory()
+                .setForceUseRtpTcp(true)
+                .createMediaSource(MediaItem.fromUri(uri))
+            mExoPlayer = ExoPlayer.Builder(context).build().apply {
+                if (media.muted) volume = 0f
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        Log.w(LOG_TAG, "ExoPlayer RTSP error for $uri: ${error.errorCodeName}", error)
+                    }
+                    override fun onRenderedFirstFrame() {
+                        this@Video.visibility = View.VISIBLE
+                    }
+                })
+                setMediaSource(source)
+                playWhenReady = true
+                prepare()
+            }
+            playerView.player = mExoPlayer
+            frame.addView(playerView)
+        }
+
+        private fun createVideoView(frame: FrameLayout) {
             mVideoView = VideoView(context).apply {
                 setVideoURI(Uri.parse(media.uri))
                 // Suppress VideoView's built-in "Can't play this video" AlertDialog. It is shown
@@ -227,9 +280,12 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         override fun destroy() {
             super.destroy()
             try {
-                if(mVideoView.isPlaying) {
-                    mVideoView.stopPlayback()
-                }
+                mVideoView?.let { if (it.isPlaying) it.stopPlayback() }
+                mVideoView = null
+            } catch(e: Throwable) {}
+            try {
+                mExoPlayer?.release()
+                mExoPlayer = null
             } catch(e: Throwable) {}
         }
     }

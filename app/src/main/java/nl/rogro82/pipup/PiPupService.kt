@@ -617,8 +617,18 @@ class PiPupService : Service(), WebServer.Handler {
 
             val windowFlags = if (popup.buttons.isNotEmpty())
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-            else
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            else {
+                // A button-less popup must never take input. On Android < 8 the overlay is a
+                // TYPE_SYSTEM_ALERT window, which was reported to swallow the remote's D-pad/Back/Home
+                // on Android 6 until the popup expired; add FLAG_NOT_TOUCHABLE there so the window is
+                // fully input-transparent and keys reach the launcher behind it. On 8+ the
+                // TYPE_APPLICATION_OVERLAY + FLAG_NOT_FOCUSABLE already passes input through, so leave
+                // that path unchanged.
+                var f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+                    f = f or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                f
+            }
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,

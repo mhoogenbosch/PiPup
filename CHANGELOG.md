@@ -7,6 +7,20 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.15.0] — 2026-08-28 (RTSP video via ExoPlayer; remote passes through on Android <8)
+Field report: a direct `video_url: "rtsp://…"` didn't play (`MediaPlayer` error 1,-2147483648 / "No content
+provider") on Android 6 and 8, though it works in Alex Savin's separate app. Also on Android 6.0.1 the
+remote's D-pad/Back/Home were swallowed by a popup until it expired.
+### Added
+- **RTSP playback via ExoPlayer (media3).** `rtsp://` / `rtsps://` `video_url`s now play through ExoPlayer's
+  RTSP module (RTP-over-TCP forced — UDP is unreliable on Wi-Fi) instead of the stock `VideoView`, which
+  cannot play RTSP reliably. Everything else (http/HLS, `camera_entity`) stays on `VideoView`, and the
+  media3 classes only load when an rtsp URL is actually shown — no impact on other popups or devices.
+### Fixed
+- On Android < 8 a button-less popup (`TYPE_SYSTEM_ALERT`) could swallow the remote's D-pad/Back/Home
+  until it expired; it now also sets `FLAG_NOT_TOUCHABLE`, so it is fully input-transparent and keys reach
+  the app behind it. Android 8+ (`TYPE_APPLICATION_OVERLAY`) already passed input through and is unchanged.
+
 ## [v0.14.3] — 2026-08-28 (self-update installs the newest release, not the last-checked one)
 Field report: a TV running v0.13.0 was asked to update while v0.14.2 was out, and installed v0.14.0.
 ### Fixed
