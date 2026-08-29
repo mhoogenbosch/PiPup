@@ -7,6 +7,14 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.18.1] — 2026-08-29 (the built-in chime is actually audible over HDMI)
+### Fixed
+- The 0.18.0 chime (0.42 s) played — logcat showed every frame delivered — but was inaudible on a Nokia 8010
+  feeding a soundbar: an HDMI/eARC audio path takes a few hundred ms to open when a new stream starts, and the
+  whole chime fell into that gap. The built-in `default` sound is now **1.9 s with a 300 ms silent lead-in**
+  and a fuller three-note tail, at full level; the same clip, hosted as a URL, was clearly audible on that TV.
+  If you use your own `sound` URL, give it a short silent lead-in too.
+
 ## [v0.18.0] — 2026-08-29 (seen over the screensaver; optional notification sound)
 Requested (#34): popups were invisible while the Android TV screensaver / ambient mode was showing, and a
 chime would help draw attention when someone is at the door.
