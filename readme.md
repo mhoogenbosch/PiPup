@@ -360,7 +360,9 @@ popup is shown, so it is seen on every Android version (some dream layers cover 
 can hide them). `false` leaves the screensaver running — the popup may then be invisible on such devices.
 
 `sound` (since 0.18.0, default none): `"default"` plays the built-in chime, any other value is a URL/URI of
-an audio clip (mp3/ogg/wav) when the popup is newly shown; `soundVolume` (0–1) scales it. An update-in-place
+an audio clip (mp3/ogg/wav) when the popup is newly shown; `soundVolume` (0–1) scales it. The built-in chime
+is 1.9 s with a 300 ms silent lead-in: an HDMI/eARC audio path needs a few hundred ms to open when a new
+stream starts, and a very short clip disappears in that gap — give your own clip a lead-in too. An update-in-place
 of the same popup does not replay it. Uses transient audio focus with ducking; like `tts` this opens an audio
 path, which on some Fire TVs briefly renegotiates HDMI audio.
 
