@@ -7,6 +7,20 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.16.0] — 2026-08-29 (all video via ExoPlayer + TextureView; VideoView removed)
+Follow-through on the v0.15.1 finding: the HLS/http `video_url` path (and therefore the HA integration's
+`camera_mode: stream`) still used the stock `VideoView` and had the same hardware-video-plane problem.
+### Changed
+- **Every `video_url` now plays through ExoPlayer rendering into a `TextureView`** — `rtsp://` (RTP over TCP
+  forced), **HLS `.m3u8`** (new `media3-exoplayer-hls` module) and progressive http. Composited by the GPU
+  inside the popup, so video popups **show over a film that is already playing** on every route, not only
+  RTSP. The stock `VideoView` is gone, and with it its system "Can't play this video" dialog (the
+  `BadTokenException` crash class) and the "can freeze concurrent live-TV playback" caveat.
+- **Audio follows `muted`** on all video routes: `muted: true` (the HA integration's default) selects no
+  audio track at all — opening an `AudioTrack` renegotiated HDMI audio and interrupted playback; `muted:
+  false` plays the stream's audio as before.
+- A failing stream is logged (`ExoPlayer error … <code>`) and never crashes the app.
+
 ## [v0.15.1] — 2026-08-29 (RTSP renders — also over video that is already playing)
 v0.15.0 played RTSP but showed only the popup frame with no picture, and starting the stream blanked the
 screen and interrupted the film that was playing on the TV.
