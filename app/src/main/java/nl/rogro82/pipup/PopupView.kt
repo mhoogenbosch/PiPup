@@ -24,7 +24,12 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import android.os.Build
+import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.bumptech.glide.Glide
@@ -280,6 +285,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     /// defaults to muted.
     private class Video(context: Context, popup: PopupProps, val media: PopupProps.Media.Video): PopupView(context, popup) {
         private var mExoPlayer: ExoPlayer? = null
+        private var mTextureView: TextureView? = null
 
         init { create() }
 
@@ -293,6 +299,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             val uri = media.uri
 
             val textureView = TextureView(context)
+            mTextureView = textureView
             // Size the TextureView (the child), never this popup view: the popup's own
             // layoutParams carry its screen position, and popup_frame is the first child of
             // the vertical layout — a fixed popup height would push the title/message out and
@@ -317,7 +324,21 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             else
                 DefaultMediaSourceFactory(context).createMediaSource(item)
 
-            mExoPlayer = ExoPlayer.Builder(context).build().apply {
+            // Decoder choice (0.17.2). The vendor hardware decoder is the default everywhere,
+            // except where it is known to break the TV's own video: on Amlogic SoCs the
+            // MediaCodec decoder and the HDMI input share one video layer, and releasing our
+            // decoder when the popup closes froze the HDMI picture (Xiaomi projector, Android
+            // 6.0.1, OMX.amlogic.avc.decoder.awesome; the TCL on Android 8 was fine). There
+            // we prefer the software decoders (OMX.google.* / c2.android.*), which never
+            // touch that layer. `softwareDecoder` in the payload overrides the automatic rule.
+            val software = media.softwareDecoder ?: autoSoftwareDecoder()
+            Log.i(LOG_TAG, "video decoder: ${if (software) "software (preferred)" else "hardware (default)"}" +
+                " [auto=${media.softwareDecoder == null}, sdk=${Build.VERSION.SDK_INT}]")
+            val renderers = DefaultRenderersFactory(context)
+                .setEnableDecoderFallback(true)
+                .setMediaCodecSelector(if (software) SOFTWARE_FIRST_SELECTOR else MediaCodecSelector.DEFAULT)
+
+            mExoPlayer = ExoPlayer.Builder(context, renderers).build().apply {
                 setVideoTextureView(textureView)
                 if (media.muted) {
                     // no audio track at all: avoid grabbing the audio output from whatever plays
@@ -347,10 +368,44 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         override fun destroy() {
             super.destroy()
             destroyPoster()
+            // Orderly teardown: stop decoding, detach the output surface, then release. A bare
+            // release() lets the decoder die while still bound to the surface, which is the
+            // moment a vendor pipeline (Amlogic) lost sync with the HDMI input.
             try {
-                mExoPlayer?.release()
+                mExoPlayer?.let { player ->
+                    runCatching { player.stop() }
+                    mTextureView?.let { tv -> runCatching { player.clearVideoTextureView(tv) } }
+                    player.release()
+                }
+            } catch(e: Throwable) {
+            } finally {
                 mExoPlayer = null
-            } catch(e: Throwable) {}
+                mTextureView = null
+            }
+        }
+
+        companion object {
+            /// Software decoders first, then the rest as ExoPlayer would order them; only for
+            /// video mime types (audio is disabled anyway). With decoder fallback enabled a
+            /// failing software decoder still falls through to the hardware one.
+            @UnstableApi
+            val SOFTWARE_FIRST_SELECTOR = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                if (MimeTypes.isVideo(mimeType)) infos.sortedBy { if (it.softwareOnly) 0 else 1 } else infos
+            }
+
+            /// Automatic rule: software on Android < 8 (old vendor decoders, the projector
+            /// class of devices) and wherever an Amlogic decoder is present, hardware elsewhere.
+            @UnstableApi
+            fun autoSoftwareDecoder(): Boolean {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+                return try {
+                    MediaCodecUtil.getDecoderInfos(MimeTypes.VIDEO_H264, false, false)
+                        .any { it.name.contains("amlogic", ignoreCase = true) }
+                } catch (e: Throwable) {
+                    false
+                }
+            }
         }
     }
 

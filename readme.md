@@ -125,7 +125,7 @@ text, `/state`, `/notify`, `/cancel`, mDNS discovery, the overlay watchdog, and 
 |---|---|
 | Popups, TTS, buttons, styling, `/state`, screen **on** | **6.0.1+** (all) |
 | Overlay rendering | 6–7 via `TYPE_SYSTEM_ALERT` (needs the overlay app-op — the installer grants it); 8+ via `TYPE_APPLICATION_OVERLAY` |
-| **`video_url`** — `rtsp://`, HLS `.m3u8` (incl. `camera_mode: stream`), progressive http (since 0.16.0) | **6.0.1+**, via ExoPlayer rendered in a `TextureView` — composited by the GPU inside the popup, so it also shows **over video the TV is already playing** (verified on a Fire TV with a film running). RTSP uses RTP-over-TCP. Audio only with `muted: false`. Not for DRM content (irrelevant for cameras). |
+| **`video_url`** — `rtsp://`, HLS `.m3u8` (incl. `camera_mode: stream`), progressive http (since 0.16.0) | **6.0.1+**, via ExoPlayer rendered in a `TextureView` — composited by the GPU inside the popup, so it also shows **over video the TV is already playing** (verified on a Fire TV with a film running). RTSP uses RTP-over-TCP. Audio only with `muted: false`. Not for DRM content (irrelevant for cameras). On **Android < 8 and Amlogic SoCs** video is decoded in software by default (since 0.17.2) because the vendor decoder froze the HDMI input on release; `softwareDecoder` overrides. |
 | MJPEG camera streams | use **`web_url`** (or the HA integration's `camera_mode: mjpeg`), never `image_url` — `image_url` decodes a single still image and cannot render a multipart MJPEG stream (it shows only the text). For a still, point `image_url` at a snapshot such as Frigate's `/api/<cam>/latest.jpg`. |
 | Screen **off** (`POST /power?state=off`) | any version, after a one-time device-admin **or** accessibility grant (`--power` / `--accessibility`); which route works depends on the device |
 | **Silent** self-update | **12+** only. On older devices the update still works but the system shows an install confirmation the app wakes the screen for and turns into a popup with a button — one press on the remote finishes it (see [the limitation](https://github.com/mhoogenbosch/ha-pipup#the-update-button-is-silent-only-on-android-12)) |
@@ -335,6 +335,19 @@ match. If the poster fails to load nothing happens; if the stream never paints, 
 ```json
 { "video": { "uri": "rtsp://cam/sub", "width": 640, "poster": "http://frigate:5000/api/cam/latest.jpg" }}
 ```
+`softwareDecoder` (since 0.17.2, video only, default *automatic*): `true` decodes in software and never
+touches the vendor hardware decoder; `false` forces the hardware decoder; absent = automatic — software on
+**Android < 8** and wherever an **Amlogic** H.264 decoder is present, hardware everywhere else. Reason: on
+Amlogic SoCs the MediaCodec decoder and the HDMI input share one video layer, and releasing the decoder when
+the popup closed **froze the HDMI picture** behind it (Xiaomi laser projector, Android 6.0.1). Software
+decoding is fine for a camera sub-stream (640×480 … 720p); a 1080p main stream may be heavy on a low-end
+projector — use the sub-stream there. Decoder fallback is on, so a failing software decoder falls through to
+hardware. `/state.lastPopup.media.softwareDecoder` echoes the requested value (`null` = automatic).
+
+```json
+{ "video": { "uri": "rtsp://cam/sub", "width": 640, "softwareDecoder": true }}
+```
+
 
 `muted` (since 0.2.4, default `false`): plays the video/web media without audio. For web media every
 (also dynamically added) `<video>`/`<audio>` element on the page is muted, so the page never claims

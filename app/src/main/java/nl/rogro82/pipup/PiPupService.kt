@@ -977,7 +977,7 @@ class PiPupService : Service(), WebServer.Handler {
     /// Media summary for /state's lastPopup: {type, width, height?} or null.
     private fun mediaInfo(p: PopupProps): Map<String, Any?>? = when (val m = p.media) {
         is PopupProps.Media.Web -> mapOf("type" to "web", "width" to m.width, "height" to m.height, "poster" to (m.poster != null))
-        is PopupProps.Media.Video -> mapOf("type" to "video", "width" to m.width, "poster" to (m.poster != null))
+        is PopupProps.Media.Video -> mapOf("type" to "video", "width" to m.width, "poster" to (m.poster != null), "softwareDecoder" to m.softwareDecoder)
         is PopupProps.Media.Image -> mapOf("type" to "image", "width" to m.width)
         is PopupProps.Media.Bitmap -> mapOf("type" to "bitmap", "width" to m.width)
         null -> null
