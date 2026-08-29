@@ -7,6 +7,26 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.15.1] — 2026-08-29 (RTSP renders — also over video that is already playing)
+v0.15.0 played RTSP but showed only the popup frame with no picture, and starting the stream blanked the
+screen and interrupted the film that was playing on the TV.
+### Fixed
+- **RTSP renders into a `TextureView`, not a `SurfaceView`.** Measured on a Fire TV with SurfaceFlinger:
+  the decoder rendered frames into the SurfaceView layer, but while another app was playing video
+  (which owns the hardware video overlay plane) nothing was composited — the popup showed a transparent
+  hole with the film through it, and the same popup rendered fine with no video playing. A TextureView
+  is composited into the popup window by the GPU (AOSP: *"TextureView is always composited using GL"*),
+  so it needs no overlay plane: RTSP now shows **moving video over a playing film**, with no black
+  flash. Verified on a Fire TV (Android 9) with the film running. (Not usable for DRM content —
+  irrelevant for a camera stream.)
+- Popup **sized to the real video aspect** on `onVideoSizeChanged`; the size is applied to the video view,
+  not the popup itself, so the popup keeps its configured position and its title/message (an interim
+  build re-centred it and pushed the text out).
+- The **audio track is disabled** for the RTSP popup: a camera popup needs no sound, and opening an
+  `AudioTrack` switched the TV's audio output (HDMI renegotiation) and interrupted what was playing.
+- Note: `camera_mode: stream` / HLS `video_url` still use the stock `VideoView` (a SurfaceView) and keep
+  the known caveat of contending with video already playing; RTSP is the path that does not.
+
 ## [v0.15.0] — 2026-08-28 (RTSP video via ExoPlayer; remote passes through on Android <8)
 Field report: a direct `video_url: "rtsp://…"` didn't play (`MediaPlayer` error 1,-2147483648 / "No content
 provider") on Android 6 and 8, though it works in Alex Savin's separate app. Also on Android 6.0.1 the
