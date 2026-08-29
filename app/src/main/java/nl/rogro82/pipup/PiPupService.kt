@@ -29,10 +29,17 @@ import fi.iki.elonen.NanoHTTPD.newFixedLengthResponse
 import java.io.File
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 
 class PiPupService : Service(), WebServer.Handler {
     private val mHandler: Handler = Handler(Looper.getMainLooper())
+    // Hand-off of HTTP requests (/notify, /cancel) to the main thread. Deliberately NOT
+    // mHandler: createPopup/removePopup call mHandler.removeCallbacksAndMessages(null),
+    // which would also drop a second request that was still queued behind the first —
+    // that popup then silently never appeared while its caller had been told OK.
+    private val mRequestHandler: Handler = Handler(Looper.getMainLooper())
     private var mOverlay: FrameLayout? = null
     private var mPopup: PopupView? = null
     // Written on the main thread, read by the NanoHTTPD worker thread in /state:
@@ -573,7 +580,9 @@ class PiPupService : Service(), WebServer.Handler {
     }
 
     @Suppress("DEPRECATION")
-    private fun createPopup(popup: PopupProps) {
+    /// Returns true when the popup is on screen (or updated in place) and /state reflects
+    /// it; false when building it threw. /notify waits for this result before answering.
+    private fun createPopup(popup: PopupProps): Boolean {
         try {
 
             Log.d(LOG_TAG, "Create popup: $popup")
@@ -598,7 +607,7 @@ class PiPupService : Service(), WebServer.Handler {
                 }
                 mCurrentProps = popup
                 scheduleRemoval(popup)
-                return
+                return true
             }
 
             // remove current popup
@@ -731,10 +740,35 @@ class PiPupService : Service(), WebServer.Handler {
             // schedule removal
 
             scheduleRemoval(popup)
+            return true
 
         } catch (ex: Throwable) {
-            ex.printStackTrace()
+            Log.e(LOG_TAG, "Create popup failed: ${ex.message}", ex)
+            return false
         }
+    }
+
+    /// Runs [block] on the main thread and waits for it to finish (at most
+    /// MAIN_SYNC_TIMEOUT_MS). Returns the block's result, or null when the main thread did
+    /// not get to it in time — the request stays queued and still runs, the caller just
+    /// cannot confirm it. Used so that /notify and /cancel answer only once /state
+    /// reflects the change: the HA integration refreshes its popup sensor right after the
+    /// call, and measured on a Nokia 8010 the popup showed up in /state 20–75 ms *after*
+    /// the old fire-and-forget reply — a refresh in that window saw the previous state.
+    private fun runOnMainSync(block: () -> Boolean): Boolean? {
+        val latch = CountDownLatch(1)
+        var result: Boolean? = null
+        mRequestHandler.post {
+            try {
+                result = block()
+            } catch (ex: Throwable) {
+                Log.e(LOG_TAG, "Main-thread request failed: ${ex.message}", ex)
+                result = false
+            } finally {
+                latch.countDown()
+            }
+        }
+        return if (latch.await(MAIN_SYNC_TIMEOUT_MS, TimeUnit.MILLISECONDS)) result else null
     }
 
     private fun stateResponse(): NanoHTTPD.Response {
@@ -1013,10 +1047,11 @@ class PiPupService : Service(), WebServer.Handler {
                             if (id != null && current != null && current.id != id) {
                                 OK("id mismatch: visible popup is ${current.id}")
                             } else {
-                                mHandler.post {
-                                    removePopup(true)
+                                // answer only once the popup is gone from /state (0.17.1)
+                                when (runOnMainSync { removePopup(true); true }) {
+                                    null -> OK("accepted; main thread busy, removal still queued")
+                                    else -> OK()
                                 }
-                                OK()
                             }
                         }
                         "/notify" -> {
@@ -1142,11 +1177,14 @@ class PiPupService : Service(), WebServer.Handler {
 
                                 Log.d(LOG_TAG, "received popup: $popup")
 
-                                mHandler.post {
-                                    createPopup(popup)
+                                // Answer only once the popup exists and /state reflects it
+                                // (0.17.1). Waits for the view to be built, not for its media
+                                // to load — an RTSP handshake must not hold the reply.
+                                when (runOnMainSync { createPopup(popup) }) {
+                                    true -> OK("$popup")
+                                    false -> ServerError("popup could not be created (see logcat)")
+                                    null -> OK("accepted; main thread busy, popup still queued: $popup")
                                 }
-
-                                OK("$popup")
 
 
                             } catch (ex: Throwable) {
@@ -1184,8 +1222,13 @@ class PiPupService : Service(), WebServer.Handler {
         const val MAX_JSON_BODY_BYTES = 256 * 1024
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"
+        // How long /notify and /cancel wait for the main thread before answering anyway.
+        // Building a popup view takes tens of ms; 2 s only elapses when the UI thread is
+        // stuck, and then a held-open HTTP connection would help nobody.
+        const val MAIN_SYNC_TIMEOUT_MS = 2_000L
 
         fun OK(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "text/plain", message)
         fun InvalidRequest(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.BAD_REQUEST, "text/plain", "invalid request: $message")
+        fun ServerError(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "text/plain", "error: $message")
     }
 }

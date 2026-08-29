@@ -19,6 +19,9 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **`/state` endpoint** — popup visibility, screen on/off (`screenOn`, since 0.2.3), popup counter,
   uptime, device info and a **stable device id** (since 0.2.5).
 - **`/cancel`** (existed upstream but undocumented) with optional selective `?id=`.
+- **`/notify` and `/cancel` answer once `/state` reflects the change** (since 0.17.1) — a `200` means the
+  popup is on (or off) screen, so a client may read `/state` straight after the call. The reply waits for
+  the view, not for its media to load. A popup that fails to build answers `500`.
 - **Muted media** (since 0.2.4) — `muted: true` on video/web media plays without audio, so a popup
   never claims audio focus (audio in a popup can freeze video playback on some devices).
 - **Text-to-speech** (since 0.2.5) — a `tts` field speaks a text on the TV when the popup appears,
