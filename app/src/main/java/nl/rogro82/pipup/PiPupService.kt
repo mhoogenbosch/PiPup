@@ -46,6 +46,16 @@ class PiPupService : Service(), WebServer.Handler {
     // @Volatile / atomics guarantee the HTTP reader sees a consistent, published
     // value instead of a torn or stale one (the sensors HA polls feed off this).
     @Volatile private var mCurrentProps: PopupProps? = null
+    // 0.18.0: whether the system screensaver (DreamService / ambient mode) is showing. There is
+    // no public getter, so it is tracked from the DREAMING_STARTED/STOPPED broadcasts; unknown
+    // (false) until the first transition after this service started.
+    @Volatile private var mDreaming = false
+    private val mDreamReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            mDreaming = intent?.action == Intent.ACTION_DREAMING_STARTED
+            Log.d(LOG_TAG, "screensaver ${if (mDreaming) "started" else "stopped"}")
+        }
+    }
     @Volatile private var mShownAt: Long = 0L
     // Last *received* popup (survives dismiss/expiry) — shown on the status screen and
     // in /state so you can verify at the TV what HA actually sent.
@@ -94,6 +104,10 @@ class PiPupService : Service(), WebServer.Handler {
         registerNsd()
         startWatchdog()
         startUpdateChecker()
+        registerReceiver(mDreamReceiver, android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_DREAMING_STARTED)
+            addAction(Intent.ACTION_DREAMING_STOPPED)
+        })
 
         // Android < 12: the installer wants an on-screen confirmation. Launched blind
         // from the background that dialog flashes and vanishes; announced as a popup
@@ -179,6 +193,8 @@ class PiPupService : Service(), WebServer.Handler {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(mDreamReceiver) }
+        SoundPlayer.stop(this)
         super.onDestroy()
 
         mWatchdogHandler.removeCallbacksAndMessages(null)
@@ -610,6 +626,13 @@ class PiPupService : Service(), WebServer.Handler {
                 return true
             }
 
+            // 0.18.0: an active screensaver may sit above app overlays (or hide them, Android
+            // 12+); end it first so the popup is actually seen. Same wake path as POST /power.
+            if (popup.dismissScreensaver && mDreaming) {
+                Log.d(LOG_TAG, "screensaver active: waking before showing ${popup.id}")
+                PowerController.wake(this)
+            }
+
             // remove current popup
 
             removePopup()
@@ -736,6 +759,9 @@ class PiPupService : Service(), WebServer.Handler {
             if (!popup.tts.isNullOrBlank()) {
                 speak(popup.tts, popup.ttsLanguage)
             }
+            if (!popup.sound.isNullOrBlank()) {
+                SoundPlayer.play(this, popup.sound, popup.soundVolume)
+            }
 
             // schedule removal
 
@@ -781,6 +807,7 @@ class PiPupService : Service(), WebServer.Handler {
             "name" to deviceName(),
             "visible" to (current != null),
             "screenOn" to powerManager.isInteractive,
+            "dreaming" to mDreaming,
             "popupsShown" to mPopupsShown.get(),
             "watchdogCleanups" to mWatchdogCleanups.get(),
             "uptime" to (SystemClock.elapsedRealtime() - mStartedAt) / 1000,
@@ -826,6 +853,7 @@ class PiPupService : Service(), WebServer.Handler {
                 "muted" to mediaMuted(last),
                 "media" to mediaInfo(last),
                 "tts" to !last.tts.isNullOrBlank(),
+                "sound" to !last.sound.isNullOrBlank(),
                 "buttons" to last.buttons.size,
                 // time to first rendered frame (video/web); null while not yet painted or n/a
                 "firstFrameMs" to mLastFirstFrameMs,
@@ -1169,7 +1197,10 @@ class PiPupService : Service(), WebServer.Handler {
                                             borderColor = params["borderColor"],
                                             borderWidth = params["borderWidth"]?.toIntOrNull(),
                                             cornerRadius = params["cornerRadius"]?.toFloatOrNull(),
-                                            showProgress = params["showProgress"]?.toBoolean() ?: false
+                                            showProgress = params["showProgress"]?.toBoolean() ?: false,
+                                            dismissScreensaver = params["dismissScreensaver"]?.toBoolean() ?: true,
+                                            sound = params["sound"],
+                                            soundVolume = params["soundVolume"]?.toFloatOrNull()
                                         )
                                     }
                                     else -> throw Exception("invalid content-type")

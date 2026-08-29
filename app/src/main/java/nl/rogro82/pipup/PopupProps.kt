@@ -32,15 +32,23 @@ data class PopupProps(
     val cornerRadius: Float? = null,      // 0 = square corners
     val showProgress: Boolean = false,    // countdown bar for popups with a finite duration
     val buttons: List<Button> = emptyList(), // DPAD-focusable buttons; pressing one POSTs to callback and dismisses
-    val callback: String? = null          // URL that receives {"popup","button","device"} on a button press
+    val callback: String? = null,         // URL that receives {"popup","button","device"} on a button press
+    // 0.18.0: end an active screensaver (DreamService / ambient mode) before showing the popup,
+    // so it is seen on every Android version - on some builds the dream layer sits above app
+    // overlays, and Android 12+ lets the dream hide them altogether. false keeps the screensaver.
+    val dismissScreensaver: Boolean = true,
+    // 0.18.0: optional notification sound when a popup is (newly) shown: "default" = built-in
+    // chime, or a URL to an audio clip. Not replayed on an update-in-place of the same popup.
+    val sound: String? = null,
+    val soundVolume: Float? = null        // 0..1; device notification volume when omitted
 ) {
     val indefinite: Boolean
         get() = duration <= 0
 
     /// equal except for duration and tts: safe to keep the existing view and only reschedule removal
     fun sameContent(other: PopupProps): Boolean =
-        copy(duration = 0, tts = null, ttsLanguage = null) ==
-                other.copy(duration = 0, tts = null, ttsLanguage = null)
+        copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null) ==
+                other.copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Button(val id: String, val label: String)

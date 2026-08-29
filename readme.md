@@ -44,6 +44,12 @@ streams) on your TV from your home-automation system, for **as long as you want*
   (multipart), which previously ignored `urgency` and `showProgress` entirely.
 - **Icon beside the text** (since 0.13.0) — an optional `icon` (image URL) shown next to the
   title/message, notification-style, with `iconPosition` (`left`/`right`) and `iconWidth`.
+- **Seen over the screensaver** (since 0.18.0) — when the TV's screensaver / ambient mode is showing, the
+  app ends it before showing the popup (the same wake path as `/power`), because on several Android
+  builds the dream layer covers app overlays and Android 12+ lets it hide them. `dismissScreensaver: false`
+  keeps the screensaver; `/state.dreaming` reports the current state.
+- **Notification sound** (since 0.18.0) — `sound: "default"` plays a built-in chime when a popup is newly
+  shown, or give a URL to your own clip; `soundVolume` (0–1). Not replayed on an update-in-place.
 - **Poster** (since 0.17.0) — an optional `poster` (image URL) on `video` and `web` media: a still
   (e.g. a camera snapshot) shown over the stream area the moment the popup appears and faded out on
   the stream's first rendered frame. A live popup never opens as an empty box while the RTSP handshake
@@ -348,6 +354,19 @@ hardware. `/state.lastPopup.media.softwareDecoder` echoes the requested value (`
 { "video": { "uri": "rtsp://cam/sub", "width": 640, "softwareDecoder": true }}
 ```
 
+
+`dismissScreensaver` (since 0.18.0, default `true`): end an active screensaver / ambient mode before the
+popup is shown, so it is seen on every Android version (some dream layers cover app overlays; Android 12+
+can hide them). `false` leaves the screensaver running — the popup may then be invisible on such devices.
+
+`sound` (since 0.18.0, default none): `"default"` plays the built-in chime, any other value is a URL/URI of
+an audio clip (mp3/ogg/wav) when the popup is newly shown; `soundVolume` (0–1) scales it. An update-in-place
+of the same popup does not replay it. Uses transient audio focus with ducking; like `tts` this opens an audio
+path, which on some Fire TVs briefly renegotiates HDMI audio.
+
+```json
+{ "id": "doorbell", "title": "Front door", "sound": "default", "soundVolume": 0.8 }
+```
 
 `muted` (since 0.2.4, default `false`): plays the video/web media without audio. For web media every
 (also dynamically added) `<video>`/`<audio>` element on the page is muted, so the page never claims
