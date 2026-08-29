@@ -7,6 +7,25 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.17.1] — 2026-08-29 (`/notify` and `/cancel` answer once `/state` reflects the change)
+The HTTP thread used to post the popup to the main thread and reply `200` at once. Measured on a Nokia
+8010, `/state` read ~20 ms after that reply still showed no popup; ~75 ms later it did. A client that
+refreshes its state right after the call (the Home Assistant integration's popup sensor, since ha-pipup
+1.15.1) saw the previous state and stayed stale until its next poll.
+### Changed
+- **`/notify` waits for the popup view to be built before answering**, so a `200` now means "the popup
+  is on screen and `/state` shows it". It waits for the view, not for its media — an RTSP handshake or
+  a WebView start-up never holds the reply. `/cancel` likewise answers after the popup is gone. If the
+  main thread does not get to the request within 2 s (stuck UI), the reply is still `200` with
+  "accepted; … still queued" rather than a hung connection.
+- A popup that **fails to build now answers `500`** ("popup could not be created") instead of `200` —
+  before, such a failure was only visible in logcat while the caller believed the popup was shown.
+### Fixed
+- **Two requests in quick succession could silently drop the second.** The hand-off to the main thread
+  used the popup handler, and `createPopup`/`removePopup` clear that handler's queue
+  (`removeCallbacksAndMessages(null)`) — a second `/notify` still queued behind the first was discarded
+  while its caller had been told `200`. Requests now go through their own handler.
+
 ## [v0.17.0] — 2026-08-29 (poster: never an empty popup while the stream connects)
 A live popup opened as an empty box for the seconds an RTSP handshake, a keyframe wait or a WebView
 start-up takes — measured 5–6 s (RTSP) and ~1 s (WebView) on a Fire TV and a Nokia 8010 — exactly the
