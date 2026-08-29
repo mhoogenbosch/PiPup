@@ -29,6 +29,8 @@ import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.transition.Transition
 
 // TODO: convert dimensions from px to dp
 
@@ -37,6 +39,76 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
     /// set by the service after build(); invoked when the user presses a popup button
     var onButton: ((PopupProps.Button) -> Unit)? = null
+
+    /// set by the service after build(); invoked once, with the milliseconds between this
+    /// view's creation and the first rendered frame of its stream (video/web). Reported in
+    /// /state.lastPopup.firstFrameMs so the start-up cost of a live popup is measurable.
+    var onFirstFrame: ((Long) -> Unit)? = null
+    private val mCreatedAt = android.os.SystemClock.elapsedRealtime()
+    private var mFirstFrameReported = false
+
+    /// Poster: a still image (e.g. a camera snapshot) laid over the stream area the moment
+    /// the popup appears, so a live popup never opens as an empty box while the stream
+    /// connects (RTSP handshake, WebView start-up, waiting for a keyframe). Faded out on
+    /// the first rendered frame. If the poster fails to load nothing happens (Glide fails
+    /// silently); if the stream never paints the poster simply stays — a snapshot from
+    /// seconds ago beats an empty frame, so there is deliberately no timeout.
+    protected var mPoster: ImageView? = null
+
+    /// `onSized` receives the poster's intrinsic width/height once decoded, so the caller can
+    /// give the stream area the poster's aspect ratio right away. A camera snapshot has the same
+    /// aspect as the camera's stream, so still and live then line up exactly and the hand-over
+    /// shows no size jump (a provisional 16:9 box letterboxed a 4:3 snapshot, then jumped).
+    protected fun attachPoster(frame: FrameLayout, url: String?, params: FrameLayout.LayoutParams,
+                               onSized: ((Int, Int) -> Unit)? = null) {
+        if (url.isNullOrEmpty()) return
+        val iv = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.FIT_XY   // box already has the image's aspect
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        frame.addView(iv, params)   // added after the stream view => drawn on top
+        mPoster = iv
+        try {
+            Glide.with(context).asBitmap().load(url)
+                .diskCacheStrategy(DiskCacheStrategy.NONE).skipMemoryCache(true)
+                .into(object : CustomTarget<android.graphics.Bitmap>() {
+                    override fun onResourceReady(resource: android.graphics.Bitmap, transition: Transition<in android.graphics.Bitmap>?) {
+                        if (mPoster !== iv) return   // already handed over / destroyed
+                        iv.setImageBitmap(resource)
+                        if (resource.width > 0 && resource.height > 0) onSized?.invoke(resource.width, resource.height)
+                    }
+                    override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) { iv.setImageDrawable(null) }
+                    override fun onLoadFailed(errorDrawable: android.graphics.drawable.Drawable?) {
+                        Log.w(LOG_TAG, "poster failed to load: $url")
+                    }
+                })
+        } catch (_: Throwable) {}
+    }
+
+    /// Called by the subclass when its stream rendered its first frame: fades the poster out
+    /// (150 ms, then removed) and reports firstFrameMs once.
+    protected fun onStreamFirstFrame() {
+        if (!mFirstFrameReported) {
+            mFirstFrameReported = true
+            val ms = android.os.SystemClock.elapsedRealtime() - mCreatedAt
+            Log.d(LOG_TAG, "first frame after ${ms} ms" + (if (mPoster != null) " (poster shown)" else ""))
+            try { onFirstFrame?.invoke(ms) } catch (_: Throwable) {}
+        }
+        val iv = mPoster ?: return
+        mPoster = null
+        iv.animate().alpha(0f).setDuration(150).withEndAction {
+            try { Glide.with(context).clear(iv) } catch (_: Throwable) {}
+            (iv.parent as? ViewGroup)?.removeView(iv)
+        }.start()
+    }
+
+    protected fun destroyPoster() {
+        mPoster?.let { iv ->
+            try { Glide.with(context).clear(iv) } catch (_: Throwable) {}
+            iv.setImageDrawable(null)
+        }
+        mPoster = null
+    }
 
     private var mProgressAnimator: ObjectAnimator? = null
 
@@ -229,9 +301,13 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             // aspect on onVideoSizeChanged.
             fun sizeTo(w: Int, h: Int) {
                 textureView.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
+                mPoster?.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
                 this@Video.visibility = View.VISIBLE
             }
             frame.addView(textureView)
+            attachPoster(frame, media.poster,
+                FrameLayout.LayoutParams(media.width, media.width * 9 / 16).apply { gravity = Gravity.CENTER }
+            ) { pw, ph -> sizeTo(media.width, (media.width.toLong() * ph / pw).toInt()) }
             sizeTo(media.width, media.width * 9 / 16)
 
             val isRtsp = uri.startsWith("rtsp://", ignoreCase = true) || uri.startsWith("rtsps://", ignoreCase = true)
@@ -255,6 +331,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                             sizeTo(media.width, (media.width.toLong() * videoSize.height / videoSize.width).toInt())
                         }
                     }
+                    override fun onRenderedFirstFrame() {
+                        onStreamFirstFrame()
+                    }
                     override fun onPlayerError(error: PlaybackException) {
                         Log.w(LOG_TAG, "ExoPlayer error for $uri: ${error.errorCodeName}", error)
                     }
@@ -267,6 +346,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
         override fun destroy() {
             super.destroy()
+            destroyPoster()
             try {
                 mExoPlayer?.release()
                 mExoPlayer = null
@@ -355,14 +435,18 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 }
-                if (media.muted) {
-                    // mute every (also dynamically added) media element, so the
-                    // page never claims audio focus (audio can stall video on
-                    // some Android TV / Fire TV devices)
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            view?.evaluateJavascript(MUTE_JS, null)
-                        }
+                webViewClient = object : WebViewClient() {
+                    // First visible paint of the page. Used for the poster hand-over and
+                    // the firstFrameMs measurement. Deliberately NOT onPageFinished: that
+                    // fires when everything has loaded, and an MJPEG stream never finishes.
+                    override fun onPageCommitVisible(view: WebView?, url: String?) {
+                        onStreamFirstFrame()
+                    }
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        // mute every (also dynamically added) media element, so the
+                        // page never claims audio focus (audio can stall video on
+                        // some Android TV / Fire TV devices)
+                        if (media.muted) view?.evaluateJavascript(MUTE_JS, null)
                     }
                 }
                 loadUrl(media.uri)
@@ -377,10 +461,20 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             }
 
             frame.addView(webView, layoutParams)
+            attachPoster(frame, media.poster,
+                FrameLayout.LayoutParams(media.width, media.height).apply { gravity = Gravity.CENTER }
+            ) { pw, ph ->
+                // Give the web view the poster's aspect at the requested width, so still and
+                // live stream match (an MJPEG page scales the image to the view width anyway).
+                val h = (media.width.toLong() * ph / pw).toInt()
+                webView.layoutParams = FrameLayout.LayoutParams(media.width, h).apply { gravity = Gravity.CENTER }
+                mPoster?.layoutParams = FrameLayout.LayoutParams(media.width, h).apply { gravity = Gravity.CENTER }
+            }
         }
 
         override fun destroy() {
             super.destroy()
+            destroyPoster()
             try {
                 mWebView?.apply {
                     loadUrl("about:blank")

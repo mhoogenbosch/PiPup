@@ -7,6 +7,25 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.17.0] — 2026-08-29 (poster: never an empty popup while the stream connects)
+A live popup opened as an empty box for the seconds an RTSP handshake, a keyframe wait or a WebView
+start-up takes — measured 5–6 s (RTSP) and ~1 s (WebView) on a Fire TV and a Nokia 8010 — exactly the
+seconds that matter when someone is at the door.
+### Added
+- **`poster`** (optional) on `media.video` and `media.web`: URL of a still image (e.g. a camera snapshot)
+  shown over the stream area the moment the popup appears and **faded out (150 ms) on the stream's first
+  rendered frame** — `onRenderedFirstFrame` for video, `onPageCommitVisible` for web (deliberately not
+  `onPageFinished`, which never fires for an MJPEG stream). If the poster fails to load nothing happens; if
+  the stream never paints, the poster simply stays — a snapshot from seconds ago beats an empty frame, so
+  there is no timeout. Update-in-place of the same popup keeps the running stream and lays no new poster
+  over it. Additive: payloads without `poster` behave exactly as before.
+- The stream area **takes the poster's own aspect** as soon as it is decoded (a snapshot has the camera's
+  aspect), so still and live line up exactly with no size jump at hand-over. For `web` this replaces the
+  caller's height hint.
+- **`/state.lastPopup.firstFrameMs`**: milliseconds from popup creation to the first rendered frame of a
+  video/web popup (`null` until painted). Makes the start-up cost — and the poster's gain — measurable from
+  the Home Assistant diagnostics. `lastPopup.media.poster` tells whether a poster was used.
+
 ## [v0.16.0] — 2026-08-29 (all video via ExoPlayer + TextureView; VideoView removed)
 Follow-through on the v0.15.1 finding: the HLS/http `video_url` path (and therefore the HA integration's
 `camera_mode: stream`) still used the stock `VideoView` and had the same hardware-video-plane problem.
