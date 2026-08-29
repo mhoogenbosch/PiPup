@@ -41,6 +41,11 @@ streams) on your TV from your home-automation system, for **as long as you want*
   (multipart), which previously ignored `urgency` and `showProgress` entirely.
 - **Icon beside the text** (since 0.13.0) — an optional `icon` (image URL) shown next to the
   title/message, notification-style, with `iconPosition` (`left`/`right`) and `iconWidth`.
+- **Poster** (since 0.17.0) — an optional `poster` (image URL) on `video` and `web` media: a still
+  (e.g. a camera snapshot) shown over the stream area the moment the popup appears and faded out on
+  the stream's first rendered frame. A live popup never opens as an empty box while the RTSP handshake
+  or WebView start-up runs; the stream area takes the poster's aspect, so still and live line up. If the
+  stream never paints the poster simply stays. `/state.lastPopup.firstFrameMs` reports the time to first frame.
 - **Screen on/off** (since 0.7.0) — `POST /power?state=on|off|toggle` wakes the TV or puts it in
   standby, without a second integration for ADB or HDMI-CEC. `/state` publishes what is actually
   possible on this device (`power.canSleep`, `power.sleepMethod`) instead of accepting a request it
@@ -315,6 +320,17 @@ All fields are optional. For `media` you can specify 3 types:
 { "image": { "uri": "address_to_your_image", "width": 480 }}
 { "video": { "uri": "address_to_your_video", "width": 480, "muted": true }}
 { "web":   { "uri": "address_to_your_resource", "width": 640, "height": 480, "muted": true }}
+```
+
+`poster` (since 0.17.0, video and web): URL of a still image shown over the stream area until the
+stream renders its first frame, then faded out. Use a camera snapshot (e.g. Frigate
+`/api/<cam>/latest.jpg`) so the popup shows a picture instantly instead of an empty frame while
+RTSP connects or the WebView starts. The stream area takes the poster's aspect, so still and live
+match. If the poster fails to load nothing happens; if the stream never paints, the poster stays.
+`/state.lastPopup.firstFrameMs` reports the time to first frame.
+
+```json
+{ "video": { "uri": "rtsp://cam/sub", "width": 640, "poster": "http://frigate:5000/api/cam/latest.jpg" }}
 ```
 
 `muted` (since 0.2.4, default `false`): plays the video/web media without audio. For web media every

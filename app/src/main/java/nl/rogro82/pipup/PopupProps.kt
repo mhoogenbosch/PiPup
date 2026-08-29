@@ -55,11 +55,16 @@ data class PopupProps(
     )
     sealed class Media {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH, val muted: Boolean = false): Media()
+        // `poster` (optional, video + web): URL of a still image shown immediately over the
+        // stream area and faded out on the first rendered frame, so a live popup never opens
+        // as an empty box while the stream connects (RTSP handshake, WebView start-up).
+        data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH, val muted: Boolean = false,
+                         val poster: String? = null): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
-        data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false): Media()
+        data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false,
+                       val poster: String? = null): Media()
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }
 

@@ -44,6 +44,8 @@ class PiPupService : Service(), WebServer.Handler {
     // in /state so you can verify at the TV what HA actually sent.
     @Volatile private var mLastPopup: PopupProps? = null
     @Volatile private var mLastPopupAt: Long = 0L
+    /// ms from view creation to first rendered frame of the last video/web popup; null until known
+    @Volatile private var mLastFirstFrameMs: Long? = null
     private val mPopupsShown = java.util.concurrent.atomic.AtomicLong(0)
     private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
@@ -578,6 +580,7 @@ class PiPupService : Service(), WebServer.Handler {
 
             mLastPopup = popup
             mLastPopupAt = SystemClock.elapsedRealtime()
+            mLastFirstFrameMs = null
 
             // update-in-place: same id and same content -> keep the view (and its
             // video/web stream) alive and only reschedule the removal timer
@@ -668,6 +671,7 @@ class PiPupService : Service(), WebServer.Handler {
                 // inflate the popup layout
 
                 mPopup = PopupView.build(this, popup)
+                mPopup?.onFirstFrame = { ms -> mLastFirstFrameMs = ms }
 
                 mPopup?.onButton = { btn ->
                     // The app's own update popups are handled locally; they have no
@@ -789,6 +793,8 @@ class PiPupService : Service(), WebServer.Handler {
                 "media" to mediaInfo(last),
                 "tts" to !last.tts.isNullOrBlank(),
                 "buttons" to last.buttons.size,
+                // time to first rendered frame (video/web); null while not yet painted or n/a
+                "firstFrameMs" to mLastFirstFrameMs,
                 "secondsAgo" to ((SystemClock.elapsedRealtime() - mLastPopupAt) / 1000)
             )
         }
@@ -936,8 +942,8 @@ class PiPupService : Service(), WebServer.Handler {
 
     /// Media summary for /state's lastPopup: {type, width, height?} or null.
     private fun mediaInfo(p: PopupProps): Map<String, Any?>? = when (val m = p.media) {
-        is PopupProps.Media.Web -> mapOf("type" to "web", "width" to m.width, "height" to m.height)
-        is PopupProps.Media.Video -> mapOf("type" to "video", "width" to m.width)
+        is PopupProps.Media.Web -> mapOf("type" to "web", "width" to m.width, "height" to m.height, "poster" to (m.poster != null))
+        is PopupProps.Media.Video -> mapOf("type" to "video", "width" to m.width, "poster" to (m.poster != null))
         is PopupProps.Media.Image -> mapOf("type" to "image", "width" to m.width)
         is PopupProps.Media.Bitmap -> mapOf("type" to "bitmap", "width" to m.width)
         null -> null
