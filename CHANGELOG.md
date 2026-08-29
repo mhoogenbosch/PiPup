@@ -7,6 +7,25 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.17.2] — 2026-08-29 (software video decoding where the hardware decoder breaks the TV's own picture)
+Field report (Xiaomi laser projector, Android 6.0.1, Amlogic): text and snapshot popups were harmless, but
+closing a **live video popup froze the HDMI source** behind it — logcat showed the Amlogic hardware decoder
+(`OMX.amlogic.avc.decoder.awesome`) resetting its surface generation on release. A TCL on Android 8 was
+fine. On Amlogic SoCs the MediaCodec decoder and the HDMI input share one video layer, and our decoder
+being released took that layer with it. (The popup already renders into a TextureView since 0.15.1, so the
+view type is not the cause; the decoder is.)
+### Added
+- **`softwareDecoder`** (optional) on `media.video`: `true` decodes in software (the vendor hardware decoder
+  is never touched), `false` forces hardware, absent = **automatic**: software on **Android < 8** and wherever an
+  **Amlogic** H.264 decoder is present, hardware everywhere else — so nothing changes on Fire TV, Google TV
+  or Nokia boxes. Decoder fallback is enabled, so a failing software decoder still falls through to hardware.
+  Software decoding is fine for a camera sub-stream (640×480 … 720p); a 1080p main stream may be heavy on a
+  low-end projector — pick the sub-stream there. Not verified on Amlogic hardware by us (none in the fleet);
+  the flag is there so the reporter can flip it either way.
+### Changed
+- **Orderly ExoPlayer teardown** on every device: `stop()` → detach the TextureView → `release()`, instead of a
+  bare `release()` while the decoder is still bound to the surface.
+
 ## [v0.17.1] — 2026-08-29 (`/notify` and `/cancel` answer once `/state` reflects the change)
 The HTTP thread used to post the popup to the main thread and reply `200` at once. Measured on a Nokia
 8010, `/state` read ~20 ms after that reply still showed no popup; ~75 ms later it did. A client that

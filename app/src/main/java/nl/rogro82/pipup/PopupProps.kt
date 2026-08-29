@@ -58,8 +58,12 @@ data class PopupProps(
         // `poster` (optional, video + web): URL of a still image shown immediately over the
         // stream area and faded out on the first rendered frame, so a live popup never opens
         // as an empty box while the stream connects (RTSP handshake, WebView start-up).
+        // `softwareDecoder` (optional, video): true = decode in software (bypass the vendor
+        // hardware decoder), false = always hardware, null/absent = automatic (software on
+        // Android < 8 and on Amlogic SoCs, whose hardware decoder shares the video layer with
+        // the HDMI input and freezes it when released - reported on a Xiaomi projector).
         data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH, val muted: Boolean = false,
-                         val poster: String? = null): Media()
+                         val poster: String? = null, val softwareDecoder: Boolean? = null): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
