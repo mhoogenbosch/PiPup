@@ -16,14 +16,16 @@ import android.view.animation.LinearInterpolator
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.TextureView
 import android.widget.*
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
-import androidx.media3.ui.PlayerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 
@@ -212,35 +214,65 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
         /// ExoPlayer path for rtsp://. Forces RTP-over-TCP: UDP interleave is frequently blocked or
         /// unreliable on Wi-Fi, and most IP cameras / RTSP servers support TCP. Errors are logged
-        /// (ExoPlayer shows no system dialog, so a failing stream cannot crash us); the popup is
-        /// revealed on the first rendered frame and removed by its own duration timer otherwise.
+        /// (ExoPlayer shows no system dialog, so a failing stream cannot crash us).
+        ///
+        /// Renders into a SurfaceView (not a TextureView): a Service overlay window is not hardware-
+        /// accelerated, where a TextureView renders nothing — but a SurfaceView composites its own
+        /// layer and works here, exactly as the stock VideoView (which is a SurfaceView) already does.
+        /// The popup is shown immediately at a provisional size so the SurfaceView has a real surface
+        /// to decode into (a 0-height view never gets one → nothing renders), then corrected to the
+        /// true aspect on onVideoSizeChanged. The audio track is disabled: a camera popup needs no
+        /// sound, and opening an AudioTrack grabs the audio output/focus and disrupted media already
+        /// playing on the TV. The concurrent hardware *video* decoder is an inherent limit — on
+        /// constrained TVs a second AVC decoder can still contend with video playing underneath.
         @UnstableApi
         private fun createRtsp(frame: FrameLayout, uri: String) {
-            val playerView = PlayerView(context).apply {
-                useController = false
-                layoutParams = FrameLayout.LayoutParams(media.width, LayoutParams.WRAP_CONTENT).apply {
-                    gravity = Gravity.CENTER
-                }
+            // TextureView, deliberately NOT a SurfaceView. A SurfaceView is a separate
+            // composition layer that SurfaceFlinger puts on a hardware video overlay plane;
+            // measured on a Fire TV: while another app was playing video (the film owned the
+            // plane) our decoder rendered frames into the SurfaceView layer but nothing was
+            // composited — the popup showed a transparent hole with the film through it. The
+            // same popup rendered fine with no video playing. A TextureView is composited into
+            // this window with the GPU (AOSP: "TextureView is always composited using GL"),
+            // so it needs no overlay plane and shows over other video. Requires a hardware-
+            // accelerated window, which this overlay is (manifest default applies to it).
+            // Not usable for DRM content — irrelevant for a camera stream.
+            val textureView = TextureView(context)
+            // Size the TextureView (the child), never this popup view: the popup's own
+            // layoutParams carry its screen position, and popup_frame is the first child of
+            // the vertical layout — a fixed popup height pushed the title/message out and
+            // re-centred it. Provisional 16:9 and visible right away so the SurfaceTexture
+            // exists before the first frame (a 0-height view never gets one); corrected to the
+            // true aspect on onVideoSizeChanged.
+            fun sizeTo(w: Int, h: Int) {
+                textureView.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
+                this@Video.visibility = View.VISIBLE
             }
+            frame.addView(textureView)
+            sizeTo(media.width, media.width * 9 / 16)
             val source = RtspMediaSource.Factory()
                 .setForceUseRtpTcp(true)
                 .createMediaSource(MediaItem.fromUri(uri))
             mExoPlayer = ExoPlayer.Builder(context).build().apply {
-                if (media.muted) volume = 0f
+                setVideoTextureView(textureView)
+                // no audio: avoid grabbing the audio output/focus from whatever is already playing
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                    .build()
                 addListener(object : Player.Listener {
+                    override fun onVideoSizeChanged(videoSize: VideoSize) {
+                        if (videoSize.width > 0 && videoSize.height > 0) {
+                            sizeTo(media.width, (media.width.toLong() * videoSize.height / videoSize.width).toInt())
+                        }
+                    }
                     override fun onPlayerError(error: PlaybackException) {
                         Log.w(LOG_TAG, "ExoPlayer RTSP error for $uri: ${error.errorCodeName}", error)
-                    }
-                    override fun onRenderedFirstFrame() {
-                        this@Video.visibility = View.VISIBLE
                     }
                 })
                 setMediaSource(source)
                 playWhenReady = true
                 prepare()
             }
-            playerView.player = mExoPlayer
-            frame.addView(playerView)
         }
 
         private fun createVideoView(frame: FrameLayout) {
