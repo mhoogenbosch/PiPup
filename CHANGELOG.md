@@ -7,6 +7,15 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [Unreleased] — installers and docs only, ships with the next release
+### Changed
+- **`install.sh` / `install.ps1` enable the accessibility service by default on TCL Google TVs**
+  (`--no-accessibility` / `-NoAccessibility` to opt out). Finding from issue #38: a process with a
+  system-bound accessibility service sits at `oom_score_adj` 100 ("visible"), out of reach of TCL's vendor
+  guard that kills and freezes background apps — a stronger and quieter keep-alive than the activity-start
+  route (200). Measured on a TCL Google TV (Android 11) and confirmed on a second owner's set that had
+  been dropping off for weeks. The service itself stays dormant. The README's TCL section leads with it now.
+
 ## [v0.18.1] — 2026-08-29 (the built-in chime is actually audible over HDMI)
 ### Fixed
 - The 0.18.0 chime (0.42 s) played — logcat showed every frame delivered — but was inaudible on a Nokia 8010

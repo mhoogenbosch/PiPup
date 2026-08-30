@@ -26,6 +26,9 @@ param(
 
     # also enable the accessibility fallback for screen off
     [switch]$Accessibility,
+    # Skip the accessibility service even on TCL, where it is enabled by default
+    # (a system-bound service keeps the process alive there).
+    [switch]$NoAccessibility,
 
     # uninstall first on a signature clash (WARNING: wipes the stable device id)
     [switch]$ForceUninstall,
@@ -135,6 +138,14 @@ foreach ($device in $Devices) {
         Write-Host '  .  no vendor auto-start op on this device (normal outside TCL)'
     } else {
         Write-Ok 'auto-start op granted (TCL)'
+        # TCL: a system-bound accessibility service is what keeps the process alive
+        # (oom_score_adj 100, out of the vendor guard's reach) - see the README's TCL section.
+        if ($NoAccessibility) {
+            Write-Host '  . TCL: accessibility keep-alive skipped (-NoAccessibility)'
+        } elseif (-not $Accessibility) {
+            Write-Host '  . TCL: enabling the accessibility service (keeps the process alive; -NoAccessibility to skip)'
+            $Accessibility = $true
+        }
     }
 
     if ($Power) {

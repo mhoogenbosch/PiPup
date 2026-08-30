@@ -165,6 +165,7 @@ Grab `install.sh` (Linux/macOS/WSL) or `install.ps1` (Windows) from the
 ```
 ./install.sh 192.168.1.10 192.168.1.11          # downloads the latest APK itself
 ./install.sh --power --apk PiPup.apk 192.168.1.10
+# TCL Google TV: the accessibility keep-alive is enabled by default (see the TCL section)
 ```
 
 It installs the APK, grants the app-ops below, starts the service and verifies over HTTP that the
@@ -222,6 +223,33 @@ TCL ships an extra guard (`com.tcl.guard`) with two separate mechanisms. Both lo
 and neither is caused by memory pressure — measured on a 1 GB set, PiPup used 26 MB PSS while the
 launcher used 119 MB and the screensaver 91 MB.
 
+**The fix that covers both: enable PiPup's accessibility service.** The installers on master do this by
+default on TCL, shipping with the first release after 0.18.1 (`--no-accessibility` / `-NoAccessibility`
+to opt out). The service itself is
+dormant — it observes nothing and the app only uses it as the screen-off fallback — but once it is
+enabled, `system_server` keeps it *bound*, and a process with a system-bound service sits at
+`oom_score_adj` **100** ("visible"): above anything the guard kills or freezes, and above the 200 the
+activity route below reaches. Measured on a TCL Google TV (Android 11):
+
+```
+$ adb shell 'P=$(pidof nl.rogro82.pipup); cat /proc/$P/oom_score_adj'
+100
+$ adb shell dumpsys activity processes | grep -A1 nl.rogro82.pipup
+  Proc #12: vis  F/S/FGS  nl.rogro82.pipup (service)
+      nl.rogro82.pipup/.PiPupAccessibilityService <= Proc{741:system/1000}
+```
+
+A second owner whose TCL had been dropping off for weeks went from 500 to 100 with this one change
+(issue #38). TCL's accessibility settings screen is a stub, so it has to be adb — and **append**, or you
+switch off every other accessibility service on the set:
+
+```
+adb shell 'cur=$(settings get secure enabled_accessibility_services); settings put secure enabled_accessibility_services "${cur:+$cur:}nl.rogro82.pipup/nl.rogro82.pipup.PiPupAccessibilityService"; settings put secure accessibility_enabled 1'
+```
+
+Like every grant it survives updates via `install.sh`, which re-applies it. The two mechanisms below are
+what you are up against without it, and how to recover a TV that is already stuck.
+
 **1. It blocks the automatic restart** of a killed service unless the app holds the vendor-specific
 `APP_AUTO_START` app-op — it logs `forbid restart Servic ... callee_does't_have_OP_AUTO_START_permission`
 and the service never comes back after a kill. The on-screen menu ("Permission Guardian" →
@@ -251,9 +279,9 @@ adb shell 'P=$(pidof nl.rogro82.pipup); grep freezer /proc/$P/cgroup; cat /proc/
 adb shell netstat -ltn | grep 7979   # frozen: Recv-Q > 0 on LISTEN, plus CLOSE_WAIT rows
 ```
 
-Incoming traffic does not thaw the app; only bringing it to the foreground does. **What keeps it
-running is `oom_score_adj` 200, and the app only reaches that when it is started from a foreground
-context**, i.e. via the activity:
+Incoming traffic does not thaw the app; only bringing it to the foreground does. Without the
+accessibility service above, **what keeps it running is `oom_score_adj` 200, and the app only reaches
+that when it is started from a foreground context**, i.e. via the activity:
 
 ```
 adb shell input keyevent KEYCODE_WAKEUP   # only needed while the screensaver is on
