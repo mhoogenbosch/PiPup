@@ -23,6 +23,7 @@ PORT=7979
 APK=""
 GRANT_POWER=0
 GRANT_ACCESSIBILITY=0
+NO_ACCESSIBILITY=0
 FORCE_UNINSTALL=0
 WAKE=0
 DEVICES=()
@@ -34,8 +35,12 @@ Usage: $0 [options] <tv-ip[:port]> [tv-ip ...]
 Options:
   --apk <file>        APK to install (default: download the latest release)
   --power             also grant device admin, so POST /power?state=off works
-  --accessibility     also enable the accessibility fallback for screen off
-                      (only needed where device admin cannot reach standby)
+  --accessibility     also enable the app's accessibility service: the screen-off
+                      fallback where device admin cannot reach standby. On TCL
+                      Google TVs this is ON BY DEFAULT, because a system-bound
+                      accessibility service is what keeps the process alive there
+                      (oom_score_adj 100, out of the vendor guard's reach)
+  --no-accessibility  do not enable it, not even on TCL
   --force-uninstall   uninstall first when the signature differs
                       (WARNING: wipes the app's stable device id, so Home Assistant
                       sees a new device)
@@ -59,6 +64,7 @@ while [ $# -gt 0 ]; do
         --apk)              APK="${2:?--apk needs a file}"; shift 2 ;;
         --power)            GRANT_POWER=1; shift ;;
         --accessibility)    GRANT_ACCESSIBILITY=1; shift ;;
+        --no-accessibility) NO_ACCESSIBILITY=1; shift ;;
         --force-uninstall)  FORCE_UNINSTALL=1; shift ;;
         --wake)             WAKE=1; shift ;;
         -h|--help)          usage; exit 0 ;;
@@ -148,6 +154,17 @@ for device in "${DEVICES[@]}"; do
         log "  · no vendor auto-start op on this device (normal outside TCL)"
     else
         ok "auto-start op granted (TCL)"
+        # TCL: the vendor guard kills and freezes background apps, and the one state
+        # it leaves alone is a process with a system-bound service. Enabling the app's
+        # (otherwise dormant) accessibility service does exactly that: oom_score_adj
+        # 100, "visible". Measured on a TCL Google TV (Android 11) and confirmed by a
+        # second owner whose TV had been dropping off for weeks (issue #38).
+        if [ "$NO_ACCESSIBILITY" -eq 1 ]; then
+            log "  · TCL: accessibility keep-alive skipped (--no-accessibility)"
+        elif [ "$GRANT_ACCESSIBILITY" -eq 0 ]; then
+            log "  · TCL: enabling the accessibility service (keeps the process alive; --no-accessibility to skip)"
+            GRANT_ACCESSIBILITY=1
+        fi
     fi
 
     if [ "$GRANT_POWER" -eq 1 ]; then
