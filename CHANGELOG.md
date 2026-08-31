@@ -7,6 +7,16 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.19.3] — 2026-08-31 (self-update works on Android 6: ISRG Root X1 bundled)
+### Fixed
+- **Self-update failed on Android 6 with "Trust anchor for certification path not found" (#41).** GitHub's
+  release assets live on `*.githubusercontent.com`, whose TLS chain anchors on ISRG Root X1 (Let's Encrypt) —
+  a root Android only ships from 7.1.1, which is why the update *check* (api.github.com, USERTrust root)
+  succeeded while the *download* failed. The updater's connections now trust the system store **plus** the
+  bundled ISRG Root X1, with full chain validation (no trust-all anywhere); on modern devices nothing
+  changes. Integrity stays double-locked regardless: the platform refuses an update APK with a different
+  signing certificate or a lower versionCode.
+
 ## [v0.19.2] — 2026-08-31 (compact buttons: the margins scale along)
 ### Fixed
 - With `buttonSize` set, the margins **around** the buttons (including the gap between the media frame and
