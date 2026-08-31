@@ -159,6 +159,7 @@ object UpdateManager {
             if (conn.responseCode != 200) {
                 return "download failed: HTTP ${conn.responseCode}".also {
                     Log.w(LOG_TAG, it)
+                    lastError = it   // 0.19.1: synchronous failures were invisible in /state
                     installStartedAt.set(0)
                 }
             }
@@ -186,11 +187,13 @@ object UpdateManager {
                 session.commit(pendingIntent(context, sessionId).intentSender)
             }
             Log.i(LOG_TAG, "Update session $sessionId committed for v$latestVersion")
+            lastError = null
             null
         } catch (ex: Throwable) {
             installStartedAt.set(0)
             "install failed: ${ex.message ?: ex.javaClass.simpleName}".also {
                 Log.e(LOG_TAG, it, ex)
+                lastError = it   // 0.19.1: a download/commit exception now shows in /state
             }
         }
     }

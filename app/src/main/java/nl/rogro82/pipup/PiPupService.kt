@@ -1209,6 +1209,7 @@ class PiPupService : Service(), WebServer.Handler {
                                             showProgress = params["showProgress"]?.toBoolean() ?: false,
                                             dismissScreensaver = params["dismissScreensaver"]?.toBoolean() ?: true,
                                             animation = params["animation"],
+                                            padding = params["padding"]?.toIntOrNull(),
                                             sound = params["sound"],
                                             soundVolume = params["soundVolume"]?.toFloatOrNull()
                                         )

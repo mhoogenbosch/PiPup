@@ -403,6 +403,9 @@ path, which on some Fire TVs briefly renegotiates HDMI audio.
 { "id": "doorbell", "title": "Front door", "sound": "default", "soundVolume": 0.8 }
 ```
 
+`padding` (since 0.19.1, px, default 20): the popup's outer margin around content; `0` gives a
+near-borderless look.
+
 `buttonSize` (since 0.19.0, sp): scales the popup buttons' text and padding together. Without it the
 buttons look exactly as before.
 

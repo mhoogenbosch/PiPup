@@ -128,7 +128,12 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             minimumWidth = 240
         }
 
-        setPadding(20,20,20,20)
+        // 0.19.1: configurable outer padding; the focus scale-up of buttons and the
+        // slide animations may paint outside their box, so never clip children.
+        val pad = popup.padding ?: 20
+        setPadding(pad, pad, pad, pad)
+        clipChildren = false
+        clipToPadding = false
 
         val title = findViewById<TextView>(R.id.popup_title)
         val message = findViewById<TextView>(R.id.popup_message)
@@ -210,6 +215,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             val row = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER
+                clipChildren = false
+                clipToPadding = false
             }
             var firstButton: Button? = null
             popup.buttons.forEach { btn ->
@@ -242,7 +249,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 }
                 if (firstButton == null) firstButton = button
                 row.addView(button, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(10, 10, 10, 0)
+                    // 0.19.1: bottom margin was 0, which clipped the buttons' rounded
+                    // corners against the popup border (field report with a screenshot).
+                    setMargins(10, 10, 10, 6)
                 })
             }
             addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))

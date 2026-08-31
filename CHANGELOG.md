@@ -7,6 +7,21 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.19.1] — 2026-08-31 (button corners unclipped; `padding`; install errors visible in /state)
+Field report with a screenshot (#40 follow-up) and a stuck self-update with an empty `update.error` (#41).
+### Added
+- **`padding`** (px): the popup's outer margin around content; the classic look is 20, `0` gives a
+  near-borderless popup.
+### Fixed
+- **The buttons' bottom rounded corners were clipped** against the popup border: the button row had no
+  bottom margin, and the popup clipped its children (which also trimmed the focus scale-up and slide
+  animations at the edges). Bottom margin added; the popup and the button row no longer clip children.
+- **A synchronous self-update failure was invisible.** `installLatest`'s early failures — a failed download
+  (HTTP error or exception: DNS, TLS/old root store) or a `PackageInstaller` commit exception — only went to
+  logcat; `/state.update.error` stayed `null` and the update just seemed to do nothing (exactly the #41
+  report: Install pressed, nothing happened, `error: null`). Those paths now set `update.error`, and a
+  successful commit clears it.
+
 ## [v0.19.0] — 2026-08-31 (compact buttons; entrance/exit animations; TCL keep-alive by default)
 Requested (#40): smaller popups were impossible with three buttons dictating the minimum width, and an
 entrance animation was wished for.
