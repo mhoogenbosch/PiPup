@@ -35,6 +35,14 @@ object UpdateManager {
     private const val LOG_TAG = "PiPupUpdate"
     private const val RELEASES_URL =
         "https://api.github.com/repos/mhoogenbosch/PiPup/releases/latest"
+    private const val HA_PIPUP_RELEASES_URL =
+        "https://api.github.com/repos/mhoogenbosch/ha-pipup/releases/latest"
+
+    /// Oldest ha-pipup release that can drive EVERY field this app accepts (0.21.0 needs
+    /// the `padding` service field, added in ha-pipup 1.17.1). Bump ONLY when a new app
+    /// release adds request fields the integration must know about — part of the release
+    /// checklist, not something that tracks GitHub.
+    const val MIN_HA_PIPUP = "1.17.1"
     private const val INSTALL_ACTION = "nl.rogro82.pipup.INSTALL_RESULT"
     private const val NET_TIMEOUT_MS = 15000
     /// An attempt that has not concluded within this window is considered abandoned
@@ -43,6 +51,10 @@ object UpdateManager {
 
     /// Result of the most recent check; read by /state on the web-server thread.
     @Volatile var latestVersion: String? = null
+        private set
+    /// Latest ha-pipup release tag — BY DEFINITION the recommended integration version,
+    /// so there is nothing to keep in sync by hand. null until the first successful check.
+    @Volatile var haPipupLatest: String? = null
         private set
     @Volatile var downloadUrl: String? = null
         private set
@@ -102,8 +114,27 @@ object UpdateManager {
     val updateAvailable: Boolean
         get() = latestVersion?.let { isNewer(it, BuildConfig.VERSION_NAME) } ?: false
 
+    /// Refresh the recommended integration version (= the latest ha-pipup release).
+    /// Non-fatal by design: any miss (offline, rate limit) keeps the previous value.
+    private fun refreshHaPipupLatest() {
+        try {
+            val conn = (URL(HA_PIPUP_RELEASES_URL).openConnection() as HttpURLConnection).apply {
+                applyUpdaterTls(this)
+                connectTimeout = NET_TIMEOUT_MS
+                readTimeout = NET_TIMEOUT_MS
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("User-Agent", "PiPup/${BuildConfig.VERSION_NAME}")
+            }
+            if (conn.responseCode != 200) return
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            Json.readTree(body).path("tag_name").asText("").removePrefix("v")
+                .takeIf { it.isNotBlank() }?.let { haPipupLatest = it }
+        } catch (_: Throwable) { /* keep the cached value */ }
+    }
+
     /// Query the GitHub releases API. Blocking — call from a background thread.
     fun check(): Boolean {
+        refreshHaPipupLatest()
         return try {
             val conn = (URL(RELEASES_URL).openConnection() as HttpURLConnection).apply {
                 applyUpdaterTls(this)

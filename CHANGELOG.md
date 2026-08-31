@@ -7,6 +7,16 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.21.0] — 2026-08-31 (the TV tells you when the HA integration is behind)
+### Added
+- **Companion-version panel.** `/state` carries `haPipup`: `recommended` (the latest
+  [ha-pipup](https://github.com/mhoogenbosch/ha-pipup) release, fetched alongside the hourly self-update
+  check — the recommendation is by definition the latest release, nothing is maintained by hand),
+  `minimum` (oldest integration that can drive this app's full API; build-time constant, now 1.17.1) and
+  `connected` (ha-pipup ≥ 1.18.0 announces itself with an `X-HA-PiPup-Version` header on every request,
+  including the 15-second `/state` poll). The status screen shows the same as one line: ✓ up to date,
+  update available, too old, or not seen yet.
+
 ## [v0.20.1] — 2026-08-31 (the fallback cap no longer races a slow player)
 ### Fixed
 - 0.20.0's 8-second fallback could still fade the poster into a black player shell on a slow device: on a
