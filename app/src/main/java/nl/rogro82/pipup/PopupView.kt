@@ -212,6 +212,12 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         // focused/unfocused background plus a small scale bump on focus, and the
         // first one takes focus so there is an indicator from the start.
         if (popup.buttons.isNotEmpty()) {
+            // 0.19.2: with an explicit buttonSize the margins around the buttons scale
+            // with the same factor as their padding, so a compact popup is compact all
+            // the way to the row above (field report: the gap between the media frame
+            // and the buttons stayed at the classic size). Classic look unchanged.
+            val marginScale = popup.buttonSize?.takeIf { it > 0 }?.div(14f) ?: 1f
+            fun m(base: Int) = (base * marginScale).toInt().coerceAtLeast(2)
             val row = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER
@@ -251,7 +257,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 row.addView(button, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                     // 0.19.1: bottom margin was 0, which clipped the buttons' rounded
                     // corners against the popup border (field report with a screenshot).
-                    setMargins(10, 10, 10, 6)
+                    setMargins(m(10), m(10), m(10), m(6))
                 })
             }
             addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))

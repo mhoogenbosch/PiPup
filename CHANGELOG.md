@@ -7,6 +7,13 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.19.2] — 2026-08-31 (compact buttons: the margins scale along)
+### Fixed
+- With `buttonSize` set, the margins **around** the buttons (including the gap between the media frame and
+  the button row) stayed at the classic size while the buttons themselves shrank — a compact popup carried a
+  full-size gap above its buttons. The margins now scale with the same factor as the button padding; the
+  classic look (no `buttonSize`) is unchanged.
+
 ## [v0.19.1] — 2026-08-31 (button corners unclipped; `padding`; install errors visible in /state)
 Field report with a screenshot (#40 follow-up) and a stuck self-update with an empty `update.error` (#41).
 ### Added
