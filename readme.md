@@ -48,6 +48,11 @@ streams) on your TV from your home-automation system, for **as long as you want*
   app ends it before showing the popup (the same wake path as `/power`), because on several Android
   builds the dream layer covers app overlays and Android 12+ lets it hide them. `dismissScreensaver: false`
   keeps the screensaver; `/state.dreaming` reports the current state.
+- **Compact buttons** (since 0.19.0) — `buttonSize` (sp) scales button text and padding together, so a
+  popup with buttons can be small; omit it for the classic look.
+- **Entrance/exit animations** (since 0.19.0) — `animation: fade | slide_left | slide_right | slide_top |
+  slide_bottom`, played when the popup is built and again (reversed) when it expires naturally. An
+  update-in-place never re-animates, and replace/`/cancel` still remove instantly.
 - **Notification sound** (since 0.18.0) — `sound: "default"` plays a built-in chime when a popup is newly
   shown, or give a URL to your own clip; `soundVolume` (0–1). Not replayed on an update-in-place.
 - **Poster** (since 0.17.0) — an optional `poster` (image URL) on `video` and `web` media: a still
@@ -397,6 +402,13 @@ path, which on some Fire TVs briefly renegotiates HDMI audio.
 ```json
 { "id": "doorbell", "title": "Front door", "sound": "default", "soundVolume": 0.8 }
 ```
+
+`buttonSize` (since 0.19.0, sp): scales the popup buttons' text and padding together. Without it the
+buttons look exactly as before.
+
+`animation` (since 0.19.0, default none): `fade`, `slide_left`, `slide_right`, `slide_top` or
+`slide_bottom`. Plays when the popup is built; an update-in-place of the same popup does not re-animate.
+A naturally expiring popup animates out the same way; replace and `/cancel` remove instantly.
 
 `muted` (since 0.2.4, default `false`): plays the video/web media without audio. For web media every
 (also dynamically added) `<video>`/`<audio>` element on the page is muted, so the page never claims

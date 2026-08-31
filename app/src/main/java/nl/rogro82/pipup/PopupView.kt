@@ -218,7 +218,20 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     isFocusable = true
                     isAllCaps = false
                     setTextColor(Color.WHITE)
-                    setPadding(36, 16, 36, 16)
+                    // Compact buttons (0.19.0): an explicit buttonSize scales the text and
+                    // the padding with it; without it the classic look stays byte-identical.
+                    // 14 sp is the platform Button default the classic padding was tuned for.
+                    val size = popup.buttonSize
+                    if (size != null && size > 0) {
+                        textSize = size
+                        val h = (size / 14f * 36).toInt().coerceAtLeast(8)
+                        val v = (size / 14f * 16).toInt().coerceAtLeast(4)
+                        setPadding(h, v, h, v)
+                        minWidth = 0; minimumWidth = 0
+                        minHeight = 0; minimumHeight = 0
+                    } else {
+                        setPadding(36, 16, 36, 16)
+                    }
                     stateListAnimator = null   // the platform one would fight our scale
                     background = buttonBackground()
                     setOnClickListener { onButton?.invoke(btn) }
@@ -260,6 +273,58 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             mProgressAnimator?.cancel()
         } catch (_: Throwable) {}
         mProgressAnimator = null
+    }
+
+    /// Entrance animation (0.19.0). Runs once per *build*: an update-in-place reuses
+    /// the view and never comes back here, so a re-notified popup does not keep
+    /// sliding in. Unknown names fall back to appearing instantly.
+    fun animateIn() {
+        when (popup.animation?.lowercase()) {
+            null, "", "none" -> return
+            "fade" -> { alpha = 0f; animate().alpha(1f).setDuration(220).start() }
+            "slide_left" -> slideIn(-1f, 0f)
+            "slide_right" -> slideIn(1f, 0f)
+            "slide_top" -> slideIn(0f, -1f)
+            "slide_bottom" -> slideIn(0f, 1f)
+            else -> Log.w(LOG_TAG, "unknown animation '${popup.animation}' — showing instantly")
+        }
+    }
+
+    private fun slideIn(dx: Float, dy: Float) {
+        // Distance based on the popup's own size once measured; a fixed 300 px
+        // fallback covers the first frame before layout.
+        post {
+            translationX = dx * (if (width > 0) width.toFloat() else 300f)
+            translationY = dy * (if (height > 0) height.toFloat() else 300f)
+            alpha = 0.6f
+            animate().translationX(0f).translationY(0f).alpha(1f).setDuration(220).start()
+        }
+        // hide the pre-layout frame at its final position
+        translationX = dx * 3000f; translationY = dy * 3000f
+    }
+
+    /// Exit animation for a popup that expires naturally; [onEnd] performs the real
+    /// removal. Callers that replace or cancel a popup skip this and tear down at
+    /// once — /cancel's "200 = gone from /state" contract (0.17.1) stays intact.
+    fun animateOut(onEnd: () -> Unit) {
+        when (popup.animation?.lowercase()) {
+            null, "", "none" -> { onEnd(); return }
+        }
+        val dx: Float; val dy: Float
+        when (popup.animation?.lowercase()) {
+            "slide_left" -> { dx = -1f; dy = 0f }
+            "slide_right" -> { dx = 1f; dy = 0f }
+            "slide_top" -> { dx = 0f; dy = -1f }
+            "slide_bottom" -> { dx = 0f; dy = 1f }
+            else -> { dx = 0f; dy = 0f } // fade
+        }
+        animate()
+            .translationX(dx * width)
+            .translationY(dy * height)
+            .alpha(0f)
+            .setDuration(180)
+            .withEndAction { runCatching(onEnd) }
+            .start()
     }
 
     private class Default(context: Context, popup: PopupProps) : PopupView(context, popup) {
