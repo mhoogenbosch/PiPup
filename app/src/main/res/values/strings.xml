@@ -31,5 +31,9 @@
     <string name="update_confirm_message">Press OK to open the system\'s install confirmation.</string>
     <string name="update_done_title">PiPup updated to %1$s</string>
     <string name="permission_install_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
+    <string name="status_ha_pipup_ok">ha-pipup %1$s ✓ up to date</string>
+    <string name="status_ha_pipup_behind">ha-pipup %1$s — update available: %2$s</string>
+    <string name="status_ha_pipup_too_old">ha-pipup %1$s is too old for this app — install %2$s or newer</string>
+    <string name="status_ha_pipup_recommended">recommended ha-pipup: %1$s (no integration seen yet)</string>
     <string name="permission_overlay_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
 </resources>

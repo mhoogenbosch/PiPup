@@ -50,6 +50,9 @@ class PiPupService : Service(), WebServer.Handler {
     // no public getter, so it is tracked from the DREAMING_STARTED/STOPPED broadcasts; unknown
     // (false) until the first transition after this service started.
     @Volatile private var mDreaming = false
+    /// Version the HA integration announced in its last request header (ha-pipup >= 1.18.0);
+    /// null until one arrives. Shown in /state and on the status screen ("connected").
+    @Volatile private var mHaPipupSeen: String? = null
     private val mDreamReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             mDreaming = intent?.action == Intent.ACTION_DREAMING_STARTED
@@ -851,6 +854,15 @@ class PiPupService : Service(), WebServer.Handler {
                 ?.let { (System.currentTimeMillis() - it) / 1000 },
             "error" to UpdateManager.lastError
         )
+        state["haPipup"] = mapOf(
+            // recommended = the latest ha-pipup release on GitHub, fetched with the
+            // hourly update check — it is never maintained by hand
+            "recommended" to UpdateManager.haPipupLatest,
+            // oldest integration that can drive this app's full API (build-time constant)
+            "minimum" to UpdateManager.MIN_HA_PIPUP,
+            // what is actually talking to us, from the request header; null = not seen
+            "connected" to mHaPipupSeen
+        )
         val last = mLastPopup
         if (last != null) {
             state["lastPopup"] = mapOf(
@@ -1029,6 +1041,9 @@ class PiPupService : Service(), WebServer.Handler {
 
     override fun handleHttpRequest(session: NanoHTTPD.IHTTPSession?): NanoHTTPD.Response {
         return session?.let {
+            // The HA integration announces itself on every request (ha-pipup >= 1.18.0) —
+            // including the 15s /state poll, so this fills in without any popup being sent.
+            session.headers["x-ha-pipup-version"]?.let { v -> mHaPipupSeen = v }
             when(session.method) {
                 NanoHTTPD.Method.GET -> {
                     when(session.uri) {

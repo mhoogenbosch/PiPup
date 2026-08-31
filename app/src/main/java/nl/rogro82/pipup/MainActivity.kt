@@ -255,6 +255,23 @@ class MainActivity : Activity() {
         sb.append("  •  popups: ").append(s.path("popupsShown").asLong(0))
         sb.append("  •  up: ").append(formatDuration(s.path("uptime").asLong(0)))
 
+        // Companion-integration line, straight from the same /state JSON HA sees.
+        val hp = s.path("haPipup")
+        if (hp.isObject) {
+            val rec = hp.path("recommended").takeIf { it.isTextual }?.asText()
+            val conn = hp.path("connected").takeIf { it.isTextual }?.asText()
+            val min = hp.path("minimum").takeIf { it.isTextual }?.asText()
+            when {
+                conn != null && min != null && UpdateManager.isNewer(min, conn) ->
+                    getString(R.string.status_ha_pipup_too_old, conn, min)
+                conn != null && rec != null && UpdateManager.isNewer(rec, conn) ->
+                    getString(R.string.status_ha_pipup_behind, conn, rec)
+                conn != null -> getString(R.string.status_ha_pipup_ok, conn)
+                rec != null -> getString(R.string.status_ha_pipup_recommended, rec)
+                else -> null
+            }?.let { sb.append("\n").append(it) }
+        }
+
         val last = s.path("lastPopup")
         if (last.isObject) {
             sb.append("\n\n").append(getString(R.string.status_last_popup))

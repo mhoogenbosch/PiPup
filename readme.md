@@ -16,6 +16,12 @@ streams) on your TV from your home-automation system, for **as long as you want*
   e.g. show a camera stream for exactly as long as there is motion.
 - **Popup `id` + update-in-place** — re-sending a notify with the same `id` and content only reschedules
   the removal timer without rebuilding the view, so a video/web stream keeps playing without flicker.
+- **Companion-version panel** (since 0.21.0) — `/state` carries a `haPipup` object: `recommended`
+  (the latest [ha-pipup](https://github.com/mhoogenbosch/ha-pipup) release, fetched with the hourly
+  update check — never maintained by hand), `minimum` (oldest integration that can drive this app's
+  full API, a build-time constant) and `connected` (what actually talks to us: ha-pipup ≥ 1.18.0
+  announces itself with an `X-HA-PiPup-Version` header on every request, including the 15s `/state`
+  poll). The app's own status screen shows the same line: ✓ up to date, update available, or too old.
 - **`/state` endpoint** — popup visibility, screen on/off (`screenOn`, since 0.2.3), popup counter,
   uptime, device info and a **stable device id** (since 0.2.5).
 - **`/cancel`** (existed upstream but undocumented) with optional selective `?id=`.
