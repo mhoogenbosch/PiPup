@@ -132,7 +132,7 @@ sources — the trade-off is **start-up time versus how far the picture lags beh
 
 | Route | Start-up (cold) | Live lag | Notes |
 |---|---|---|---|
-| **WebRTC** (`web_url` → go2rtc `stream.html?src=<cam>&mode=webrtc`) | 3–6 s | **< 0.5 s** | Full frame rate. **Best choice since 0.20.0** — see below. |
+| **WebRTC** (`web_url` → go2rtc `stream.html?src=<cam>&mode=webrtc`) | 3–7 s (up to ~11 s on slow webviews) | **< 0.5 s** | Full frame rate. **Best choice since 0.20.0** — see below. |
 | **RTSP** (`video_url: rtsp://…`) | 4–6 s | ~1 s | ExoPlayer, RTP over TCP; renders over playing video. |
 | **MJPEG** (`web_url` → Frigate `/api/<cam>?fps=5`) | 0.2–0.5 s | 2–3 s | The lag is inherent: camera GOP + Frigate's detect pipeline + the frame sampling. Choppy (detect fps). |
 | **HLS** (`video_url: …m3u8`, `camera_mode: stream`) | 7–12 s | 5–10 s | Avoid for live viewing; fine for non-urgent clips. |
@@ -140,7 +140,10 @@ sources — the trade-off is **start-up time versus how far the picture lags beh
 The start-up column stopped mattering with the **poster** (0.17.0): a still of the same camera shows
 instantly and hands over to the stream. What *does* matter is the hand-over moment — and since
 **0.20.0** the poster on a `web_url` popup fades when the page's video **actually plays** (not when
-the page paints), so the slow WebRTC start-up is fully masked while its sub-second live lag is kept:
+the page paints), so the slow WebRTC start-up is fully masked while its sub-second live lag is kept.
+Since **0.20.1** that holds with no time limit once the page is seen to contain a `<video>` element
+(measured hand-over: 6.4 s on a Nokia 8010, 10.5 s on a slow TCL webview — the poster covered all of
+it); only a page where no video is ever found falls back to showing the page after 20 s:
 
 ```json
 { "id": "doorbell", "duration": 0, "media": { "web": {
