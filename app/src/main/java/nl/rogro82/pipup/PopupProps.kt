@@ -43,6 +43,9 @@ data class PopupProps(
     val soundVolume: Float? = null,       // 0..1; device notification volume when omitted
     // 0.19.0: button text size in sp (padding scales along); null = the classic look
     val buttonSize: Float? = null,
+    // 0.19.1: outer padding of the popup in px (the black margin around content);
+    // null = the classic 20 px. 0 gives a near-borderless look.
+    val padding: Int? = null,
     // 0.19.0: entrance animation (and exit on natural expiry): fade, slide_left,
     // slide_right, slide_top, slide_bottom; null/none = appear instantly (classic).
     val animation: String? = null
