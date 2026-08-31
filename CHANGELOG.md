@@ -7,7 +7,17 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
-## [Unreleased] — installers and docs only, ships with the next release
+## [v0.19.0] — 2026-08-31 (compact buttons; entrance/exit animations; TCL keep-alive by default)
+Requested (#40): smaller popups were impossible with three buttons dictating the minimum width, and an
+entrance animation was wished for.
+### Added
+- **`buttonSize`** (sp): scales the button text and its padding together, so a popup with buttons can be
+  genuinely small. Without the field the classic look is unchanged.
+- **`animation`**: `fade`, `slide_left`, `slide_right`, `slide_top`, `slide_bottom` — plays when a popup is
+  **built**; an update-in-place of the same popup deliberately does not re-animate (a camera popup
+  re-notified every few seconds must not keep sliding in). A popup that **expires naturally** animates out
+  the same way; a replace, `/cancel` or button press still tears down instantly, so 0.17.1's "200 = gone
+  from `/state`" contract holds. Unknown names show instantly. `/state.lastPopup.animation` echoes it.
 ### Changed
 - **`install.sh` / `install.ps1` enable the accessibility service by default on TCL Google TVs**
   (`--no-accessibility` / `-NoAccessibility` to opt out). Finding from issue #38: a process with a

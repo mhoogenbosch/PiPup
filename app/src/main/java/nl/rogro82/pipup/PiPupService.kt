@@ -589,7 +589,13 @@ class PiPupService : Service(), WebServer.Handler {
         // duration <= 0 means: show until /cancel or until replaced
         if (!popup.indefinite) {
             mHandler.postDelayed({
-                removePopup(true)
+                // Natural expiry is the one removal nobody is waiting on, so it may
+                // animate (0.19.0); every other path (replace, /cancel, buttons) tears
+                // down at once. If a new popup lands mid-animation, createPopup's own
+                // removePopup wins and the animation's end action becomes a no-op.
+                val view = mPopup
+                if (view != null) view.animateOut { removePopup(true) }
+                else removePopup(true)
             }, popup.duration * 1000L) // 1000L: an Int*Int product overflows past ~24.8 days
                                         // and a negative delay removes the popup instantly
         }
@@ -756,6 +762,8 @@ class PiPupService : Service(), WebServer.Handler {
             mShownAt = SystemClock.elapsedRealtime()
             mPopupsShown.incrementAndGet()
 
+            mPopup?.animateIn()
+
             if (!popup.tts.isNullOrBlank()) {
                 speak(popup.tts, popup.ttsLanguage)
             }
@@ -854,6 +862,7 @@ class PiPupService : Service(), WebServer.Handler {
                 "media" to mediaInfo(last),
                 "tts" to !last.tts.isNullOrBlank(),
                 "sound" to !last.sound.isNullOrBlank(),
+                "animation" to last.animation,
                 "buttons" to last.buttons.size,
                 // time to first rendered frame (video/web); null while not yet painted or n/a
                 "firstFrameMs" to mLastFirstFrameMs,
@@ -1199,6 +1208,7 @@ class PiPupService : Service(), WebServer.Handler {
                                             cornerRadius = params["cornerRadius"]?.toFloatOrNull(),
                                             showProgress = params["showProgress"]?.toBoolean() ?: false,
                                             dismissScreensaver = params["dismissScreensaver"]?.toBoolean() ?: true,
+                                            animation = params["animation"],
                                             sound = params["sound"],
                                             soundVolume = params["soundVolume"]?.toFloatOrNull()
                                         )

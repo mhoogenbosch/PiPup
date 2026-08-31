@@ -40,7 +40,12 @@ data class PopupProps(
     // 0.18.0: optional notification sound when a popup is (newly) shown: "default" = built-in
     // chime, or a URL to an audio clip. Not replayed on an update-in-place of the same popup.
     val sound: String? = null,
-    val soundVolume: Float? = null        // 0..1; device notification volume when omitted
+    val soundVolume: Float? = null,       // 0..1; device notification volume when omitted
+    // 0.19.0: button text size in sp (padding scales along); null = the classic look
+    val buttonSize: Float? = null,
+    // 0.19.0: entrance animation (and exit on natural expiry): fade, slide_left,
+    // slide_right, slide_top, slide_bottom; null/none = appear instantly (classic).
+    val animation: String? = null
 ) {
     val indefinite: Boolean
         get() = duration <= 0
