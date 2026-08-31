@@ -125,6 +125,34 @@ streams) on your TV from your home-automation system, for **as long as you want*
 [mhoogenbosch/ha-pipup](https://github.com/mhoogenbosch/ha-pipup) — with a config flow per TV,
 a popup binary sensor and `pipup.show` / `pipup.dismiss` actions (including camera entities).
 
+## Which stream should a camera popup use?
+
+Measured across a mixed fleet (Fire TV, Nokia 8010, TCL Google TV) with go2rtc + Frigate as the
+sources — the trade-off is **start-up time versus how far the picture lags behind reality**:
+
+| Route | Start-up (cold) | Live lag | Notes |
+|---|---|---|---|
+| **WebRTC** (`web_url` → go2rtc `stream.html?src=<cam>&mode=webrtc`) | 3–6 s | **< 0.5 s** | Full frame rate. **Best choice since 0.20.0** — see below. |
+| **RTSP** (`video_url: rtsp://…`) | 4–6 s | ~1 s | ExoPlayer, RTP over TCP; renders over playing video. |
+| **MJPEG** (`web_url` → Frigate `/api/<cam>?fps=5`) | 0.2–0.5 s | 2–3 s | The lag is inherent: camera GOP + Frigate's detect pipeline + the frame sampling. Choppy (detect fps). |
+| **HLS** (`video_url: …m3u8`, `camera_mode: stream`) | 7–12 s | 5–10 s | Avoid for live viewing; fine for non-urgent clips. |
+
+The start-up column stopped mattering with the **poster** (0.17.0): a still of the same camera shows
+instantly and hands over to the stream. What *does* matter is the hand-over moment — and since
+**0.20.0** the poster on a `web_url` popup fades when the page's video **actually plays** (not when
+the page paints), so the slow WebRTC start-up is fully masked while its sub-second live lag is kept:
+
+```json
+{ "id": "doorbell", "duration": 0, "media": { "web": {
+  "uri": "http://go2rtc:1984/stream.html?src=doorbell&mode=webrtc",
+  "width": 720, "height": 540, "muted": true,
+  "poster": "http://frigate:5000/api/doorbell/latest.jpg"
+}}}
+```
+
+**Recommendation: WebRTC + poster** for anything where "now" matters (doorbell, motion). MJPEG remains
+a fine zero-dependency fallback when go2rtc is not available; RTSP sits in between and needs no web page.
+
 ## Supported devices
 
 **Minimum: Android 6.0.1 (API 23).** Built for Android TV / Fire TV, but since 0.14.0 it also
