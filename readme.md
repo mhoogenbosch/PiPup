@@ -135,6 +135,7 @@ text, `/state`, `/notify`, `/cancel`, mDNS discovery, the overlay watchdog, and 
 | Capability | Works on |
 |---|---|
 | Popups, TTS, buttons, styling, `/state`, screen **on** | **6.0.1+** (all) |
+| **Self-update** | **6.0.1+** since 0.19.3 (bundles ISRG Root X1 — Android < 7.1.1 lacks the Let's Encrypt root that GitHub's download hosts use) |
 | Overlay rendering | 6–7 via `TYPE_SYSTEM_ALERT` (needs the overlay app-op — the installer grants it); 8+ via `TYPE_APPLICATION_OVERLAY` |
 | **`video_url`** — `rtsp://`, HLS `.m3u8` (incl. `camera_mode: stream`), progressive http (since 0.16.0) | **6.0.1+**, via ExoPlayer rendered in a `TextureView` — composited by the GPU inside the popup, so it also shows **over video the TV is already playing** (verified on a Fire TV with a film running). RTSP uses RTP-over-TCP. Audio only with `muted: false`. Not for DRM content (irrelevant for cameras). On **Android < 8 and Amlogic SoCs** video is decoded in software by default (since 0.17.2) because the vendor decoder froze the HDMI input on release; `softwareDecoder` overrides. |
 | MJPEG camera streams | use **`web_url`** (or the HA integration's `camera_mode: mjpeg`), never `image_url` — `image_url` decodes a single still image and cannot render a multipart MJPEG stream (it shows only the text). For a still, point `image_url` at a snapshot such as Frigate's `/api/<cam>/latest.jpg`. |
