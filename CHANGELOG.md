@@ -7,6 +7,14 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.20.1] — 2026-08-31 (the fallback cap no longer races a slow player)
+### Fixed
+- 0.20.0's 8-second fallback could still fade the poster into a black player shell on a slow device: on a
+  TCL Google TV the page committed after 5.7 s and the cap fired at 13.7 s — occasionally just before the
+  video's first frame. The watcher now reports when it *finds* a `<video>` element, and a page with one is
+  exempt from the cap: its poster simply stays until the video actually plays. The cap (now 20 s) only
+  remains for pages whose watcher reports nothing at all (broken or blocked JS).
+
 ## [v0.20.0] — 2026-08-31 (the poster waits for the video on web popups)
 ### Changed
 - **On a `web_url` popup the poster now fades when the page's *video* actually plays**, not when the page
