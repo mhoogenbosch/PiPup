@@ -59,7 +59,10 @@ streams) on your TV from your home-automation system, for **as long as you want*
   (e.g. a camera snapshot) shown over the stream area the moment the popup appears and faded out on
   the stream's first rendered frame. A live popup never opens as an empty box while the RTSP handshake
   or WebView start-up runs; the stream area takes the poster's aspect, so still and live line up. If the
-  stream never paints the poster simply stays. `/state.lastPopup.firstFrameMs` reports the time to first frame.
+  stream never paints the poster simply stays. On a web page that hosts a `<video>` (e.g. go2rtc's WebRTC
+  viewer) the fade waits for actual playback (since 0.20.0), not for the page paint — so WebRTC + poster
+  gives an instant still followed by near-realtime video. `/state.lastPopup.firstFrameMs` reports the time
+  to first frame.
 - **Screen on/off** (since 0.7.0) — `POST /power?state=on|off|toggle` wakes the TV or puts it in
   standby, without a second integration for ADB or HDMI-CEC. `/state` publishes what is actually
   possible on this device (`power.canSleep`, `power.sleepMethod`) instead of accepting a request it

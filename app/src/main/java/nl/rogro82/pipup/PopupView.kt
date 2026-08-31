@@ -571,17 +571,33 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 }
                 webViewClient = object : WebViewClient() {
-                    // First visible paint of the page. Used for the poster hand-over and
-                    // the firstFrameMs measurement. Deliberately NOT onPageFinished: that
-                    // fires when everything has loaded, and an MJPEG stream never finishes.
+                    // First visible paint of the page (deliberately NOT onPageFinished:
+                    // that never fires for an MJPEG stream). For a plain page (MJPEG,
+                    // snapshot) this IS the first image — but a page that hosts a <video>
+                    // (go2rtc's WebRTC player) paints its shell seconds before the video
+                    // flows, and fading the poster here left a black hole until the
+                    // stream connected (0.19.x). So: inject a watcher; it reports
+                    // "playing" once a video actually renders frames, or "novideo" when
+                    // the page has no video element — and only then the poster fades.
                     override fun onPageCommitVisible(view: WebView?, url: String?) {
-                        onStreamFirstFrame()
+                        view?.evaluateJavascript(VIDEO_WATCH_JS, null)
+                        // Hard cap: a broken page must not pin the poster forever; a
+                        // stale snapshot is still better than black, so fade late.
+                        view?.postDelayed({ onStreamFirstFrame() }, POSTER_FADE_CAP_MS)
                     }
                     override fun onPageFinished(view: WebView?, url: String?) {
                         // mute every (also dynamically added) media element, so the
                         // page never claims audio focus (audio can stall video on
                         // some Android TV / Fire TV devices)
                         if (media.muted) view?.evaluateJavascript(MUTE_JS, null)
+                    }
+                }
+                // The watcher signals through the document title — no JS bridge needed.
+                webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onReceivedTitle(view: WebView?, title: String?) {
+                        if (title == "pipup:playing" || title == "pipup:novideo") {
+                            onStreamFirstFrame()
+                        }
                     }
                 }
                 loadUrl(media.uri)
@@ -653,6 +669,57 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             Log.w(LOG_TAG, "Unparseable color '$value', using $fallback")
             Color.parseColor(fallback)
         }
+
+        /// How long a web popup may keep its poster while the page never reports a
+        /// playing video (broken player, blocked JS). Cold WebRTC needs 3-4 s.
+        const val POSTER_FADE_CAP_MS = 8_000L
+
+        /// Reports through document.title: "pipup:playing" as soon as any <video>
+        /// renders frames, or "pipup:novideo" when no video element shows up shortly
+        /// after the first paint (an MJPEG/snapshot page - its paint IS the image).
+        const val VIDEO_WATCH_JS = """
+            (function() {
+                if (window.__pipupWatch) return;
+                window.__pipupWatch = true;
+                var done = false;
+                function signal(what) {
+                    if (done) return;
+                    done = true;
+                    document.title = 'pipup:' + what;
+                }
+                function hook(v) {
+                    if (v.__pipupHooked) return;
+                    v.__pipupHooked = true;
+                    if (!v.paused && v.currentTime > 0 && v.readyState >= 2) { signal('playing'); return; }
+                    ['playing', 'timeupdate', 'loadeddata'].forEach(function(ev) {
+                        v.addEventListener(ev, function() {
+                            if (v.currentTime > 0 || ev === 'playing') signal('playing');
+                        });
+                    });
+                }
+                function scan(root) {
+                    (root.querySelectorAll ? root.querySelectorAll('video') : []).forEach(hook);
+                    // go2rtc's video-rtc element hides its <video> in a shadow root
+                    (root.querySelectorAll ? root.querySelectorAll('*') : []).forEach(function(el) {
+                        if (el.shadowRoot) scan(el.shadowRoot);
+                    });
+                }
+                scan(document);
+                new MutationObserver(function() { scan(document); }).observe(
+                    document.documentElement, { childList: true, subtree: true });
+                setTimeout(function() {
+                    if (!done && document.querySelectorAll('video').length === 0) {
+                        var shadowVideo = false;
+                        try {
+                            document.querySelectorAll('*').forEach(function(el) {
+                                if (el.shadowRoot && el.shadowRoot.querySelector('video')) shadowVideo = true;
+                            });
+                        } catch (e) {}
+                        if (!shadowVideo) signal('novideo');
+                    }
+                }, 400);
+            })();
+        """
 
         const val MUTE_JS = """
             (function() {
