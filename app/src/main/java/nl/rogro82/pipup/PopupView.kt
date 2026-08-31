@@ -552,6 +552,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
     private class Web(context: Context, popup: PopupProps, val media: PopupProps.Media.Web): PopupView(context, popup) {
         private var mWebView: WebView? = null
+        /// The watcher saw a <video> element on the page: "playing" will follow, so the
+        /// fallback cap must NOT fade the poster (a still beats a black player shell).
+        @Volatile private var mVideoElementFound = false
 
         init { create() }
 
@@ -581,9 +584,15 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     // the page has no video element — and only then the poster fades.
                     override fun onPageCommitVisible(view: WebView?, url: String?) {
                         view?.evaluateJavascript(VIDEO_WATCH_JS, null)
-                        // Hard cap: a broken page must not pin the poster forever; a
-                        // stale snapshot is still better than black, so fade late.
-                        view?.postDelayed({ onStreamFirstFrame() }, POSTER_FADE_CAP_MS)
+                        // Fallback cap for a page whose watcher never reports anything
+                        // (broken/blocked JS). When a <video> element WAS found, the cap
+                        // stands down: "playing" will follow, and until then the poster
+                        // is strictly better than the player's black shell. Measured on a
+                        // TCL: page commit 5.7 s + the old blind 8 s cap fired at 13.7 s,
+                        // sometimes just before the video - visible as a black flash.
+                        view?.postDelayed({
+                            if (!mVideoElementFound) onStreamFirstFrame()
+                        }, POSTER_FADE_CAP_MS)
                     }
                     override fun onPageFinished(view: WebView?, url: String?) {
                         // mute every (also dynamically added) media element, so the
@@ -595,8 +604,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 // The watcher signals through the document title — no JS bridge needed.
                 webChromeClient = object : android.webkit.WebChromeClient() {
                     override fun onReceivedTitle(view: WebView?, title: String?) {
-                        if (title == "pipup:playing" || title == "pipup:novideo") {
-                            onStreamFirstFrame()
+                        when (title) {
+                            "pipup:videofound" -> mVideoElementFound = true
+                            "pipup:playing", "pipup:novideo" -> onStreamFirstFrame()
                         }
                     }
                 }
@@ -670,9 +680,10 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             Color.parseColor(fallback)
         }
 
-        /// How long a web popup may keep its poster while the page never reports a
-        /// playing video (broken player, blocked JS). Cold WebRTC needs 3-4 s.
-        const val POSTER_FADE_CAP_MS = 8_000L
+        /// Fallback fade for a page whose watcher never reports anything at all
+        /// (broken or blocked JS). A page with a discovered <video> is exempt: its
+        /// poster stays until the video actually plays, however long that takes.
+        const val POSTER_FADE_CAP_MS = 20_000L
 
         /// Reports through document.title: "pipup:playing" as soon as any <video>
         /// renders frames, or "pipup:novideo" when no video element shows up shortly
@@ -690,6 +701,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 function hook(v) {
                     if (v.__pipupHooked) return;
                     v.__pipupHooked = true;
+                    if (!done) document.title = 'pipup:videofound';
                     if (!v.paused && v.currentTime > 0 && v.readyState >= 2) { signal('playing'); return; }
                     ['playing', 'timeupdate', 'loadeddata'].forEach(function(ev) {
                         v.addEventListener(ev, function() {
