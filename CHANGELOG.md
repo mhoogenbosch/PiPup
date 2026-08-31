@@ -7,6 +7,17 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.20.0] — 2026-08-31 (the poster waits for the video on web popups)
+### Changed
+- **On a `web_url` popup the poster now fades when the page's *video* actually plays**, not when the page
+  paints. For an MJPEG/snapshot page nothing changes (its paint *is* the image — a watcher reports
+  "no video" within ~0.4 s). But a player page such as go2rtc's WebRTC viewer paints its shell seconds
+  before the stream flows, and 0.19.x faded the poster at that paint — leaving a black hole until WebRTC
+  connected. The watcher also looks inside shadow DOM (go2rtc's `video-rtc` element) and a hard 8 s cap
+  keeps a broken page from pinning the poster forever. This makes **WebRTC + poster** the best camera
+  route on TVs: instant still, then near-realtime video (sub-second lag, full frame rate), with the slow
+  WebRTC start-up fully masked. `firstFrameMs` now measures to actual playback on such pages.
+
 ## [v0.19.3] — 2026-08-31 (self-update works on Android 6: ISRG Root X1 bundled)
 ### Fixed
 - **Self-update failed on Android 6 with "Trust anchor for certification path not found" (#41).** GitHub's
