@@ -852,7 +852,9 @@ class PiPupService : Service(), WebServer.Handler {
             "silent" to UpdateManager.silentInstall,
             "checkedSecondsAgo" to UpdateManager.lastCheckedAt.takeIf { it > 0 }
                 ?.let { (System.currentTimeMillis() - it) / 1000 },
-            "error" to UpdateManager.lastError
+            "error" to UpdateManager.lastError,
+            // which trust store updater connections use; "unbuilt" until the first check
+            "tlsFactory" to UpdateManager.tlsFactoryKind
         )
         state["haPipup"] = mapOf(
             // recommended = the latest ha-pipup release on GitHub, fetched with the

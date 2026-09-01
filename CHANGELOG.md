@@ -7,6 +7,18 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.21.1] — 2026-09-01 (self-update TLS fix reaches the redirect hop)
+### Fixed
+- 0.19.3's bundled ISRG Root X1 never protected the actual download: the GitHub asset URL redirects
+  (github.com → release-assets.githubusercontent.com) and `HttpURLConnection`'s automatic redirect makes a
+  fresh connection that does **not** inherit the custom `SSLSocketFactory` — so the ISRG-anchored hop was
+  still validated against the system store, and Android 6 kept failing with "Trust anchor not found" (#41).
+  The updater now follows redirects manually (max 5 hops) and applies its trust store to every hop.
+### Added
+- `/state.update.tlsFactory` reports which trust store the updater uses (`composite` = system + bundled
+  ISRG Root X1; `platform-default: <why>` when building it failed; `unbuilt` before the first check) — so
+  a TLS problem on a remote device is diagnosable without adb.
+
 ## [v0.21.0] — 2026-08-31 (the TV tells you when the HA integration is behind)
 ### Added
 - **Companion-version panel.** `/state` carries `haPipup`: `recommended` (the latest

@@ -45,6 +45,7 @@ object UpdateManager {
     const val MIN_HA_PIPUP = "1.17.1"
     private const val INSTALL_ACTION = "nl.rogro82.pipup.INSTALL_RESULT"
     private const val NET_TIMEOUT_MS = 15000
+    private const val MAX_REDIRECTS = 5
     /// An attempt that has not concluded within this window is considered abandoned
     /// (typically: the on-TV confirmation was never accepted) and may be replaced.
     private const val INSTALL_TIMEOUT_MS = 15 * 60 * 1000L
@@ -61,6 +62,12 @@ object UpdateManager {
     @Volatile var lastCheckedAt: Long = 0L
         private set
     @Volatile var lastError: String? = null
+        private set
+    /// Which trust store the updater's connections use: "composite" (system + bundled
+    /// ISRG Root X1), "platform-default: <why>" when building the composite failed, or
+    /// "unbuilt" until the first connection forces the lazy build. Reported in /state
+    /// so a TLS problem on a remote device can be diagnosed without adb (#41).
+    @Volatile var tlsFactoryKind: String = "unbuilt"
         private set
 
     /// 0 = idle; otherwise the elapsedRealtime the current attempt started at. A
@@ -223,11 +230,41 @@ object UpdateManager {
 
             SSLContext.getInstance("TLS").apply {
                 init(null, arrayOf(composite), null)
-            }.socketFactory
+            }.socketFactory.also { tlsFactoryKind = "composite" }
         } catch (ex: Throwable) {
             Log.w(LOG_TAG, "legacy TLS factory unavailable, using platform default: ${ex.message}")
+            tlsFactoryKind = "platform-default: ${ex.message ?: ex.javaClass.simpleName}"
             null
         }
+    }
+
+    /// Open `startUrl` and follow redirects MANUALLY (max MAX_REDIRECTS hops), applying
+    /// the updater trust store to every hop. HttpURLConnection's automatic redirect
+    /// handling creates a fresh connection for the target that does NOT inherit this
+    /// connection's sslSocketFactory — so the GitHub asset download
+    /// (github.com → release-assets.githubusercontent.com, whose chain anchors on
+    /// ISRG Root X1) was validated against the system store only, and Android 6
+    /// failed it with "Trust anchor not found" even with the root bundled (#41).
+    private fun openWithRedirects(startUrl: String, readTimeoutMs: Int): HttpURLConnection {
+        var url = URL(startUrl)
+        for (hop in 0 until MAX_REDIRECTS) {
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                applyUpdaterTls(this)
+                connectTimeout = NET_TIMEOUT_MS
+                readTimeout = readTimeoutMs
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "PiPup/${BuildConfig.VERSION_NAME}")
+            }
+            if (conn.responseCode in 300..399) {
+                val location = conn.getHeaderField("Location")
+                    ?: return conn // malformed redirect: let the caller report the code
+                conn.disconnect()
+                url = URL(url, location) // URL(base, spec) also resolves relative Locations
+            } else {
+                return conn
+            }
+        }
+        throw Exception("too many redirects (> $MAX_REDIRECTS) for $startUrl")
     }
 
     /// Apply the updater trust store to a connection (no-op for plain http and on failure).
@@ -249,13 +286,7 @@ object UpdateManager {
         }
 
         return try {
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                applyUpdaterTls(this)
-                connectTimeout = NET_TIMEOUT_MS
-                readTimeout = 60000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "PiPup/${BuildConfig.VERSION_NAME}")
-            }
+            val conn = openWithRedirects(url, readTimeoutMs = 60000)
             if (conn.responseCode != 200) {
                 return "download failed: HTTP ${conn.responseCode}".also {
                     Log.w(LOG_TAG, it)
