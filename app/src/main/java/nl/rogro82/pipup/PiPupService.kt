@@ -59,6 +59,17 @@ class PiPupService : Service(), WebServer.Handler {
             Log.d(LOG_TAG, "screensaver ${if (mDreaming) "started" else "stopped"}")
         }
     }
+    /// Screen on/off pushes (0.23.0): a controller learns of standby without polling.
+    private val mScreenReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON -> { emit("screen_on"); checkPermissionsChanged() }
+                Intent.ACTION_SCREEN_OFF -> emit("screen_off")
+            }
+        }
+    }
+    /// Permissions as last pushed; a difference is pushed as a "permissions" event.
+    @Volatile private var mLastPermissions: Map<String, Any?>? = null
     @Volatile private var mShownAt: Long = 0L
     // Last *received* popup (survives dismiss/expiry) — shown on the status screen and
     // in /state so you can verify at the TV what HA actually sent.
@@ -104,9 +115,14 @@ class PiPupService : Service(), WebServer.Handler {
             return
         }
 
+        loadSettings()
         registerNsd()
         startWatchdog()
         startUpdateChecker()
+        registerReceiver(mScreenReceiver, android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        })
         registerReceiver(mDreamReceiver, android.content.IntentFilter().apply {
             addAction(Intent.ACTION_DREAMING_STARTED)
             addAction(Intent.ACTION_DREAMING_STOPPED)
@@ -121,6 +137,10 @@ class PiPupService : Service(), WebServer.Handler {
         }
 
         maybeAnnounceInstalledUpdate()
+        mLastPermissions = Permissions.asMap(this)
+        // "started" covers reboot, power-restore and app restart: the controller knows
+        // any popup it thought was up is gone and reads fresh state.
+        emit("started")
         // TTS is initialised lazily: the engine is a separate ~100MB process and keeping it
         // bound for the entire service lifetime is the single biggest reason this app gets
         // picked by low-memory killers on 1GB TVs. Popups without `tts` never need it.
@@ -197,6 +217,7 @@ class PiPupService : Service(), WebServer.Handler {
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(mDreamReceiver) }
+        runCatching { unregisterReceiver(mScreenReceiver) }
         SoundPlayer.stop(this)
         super.onDestroy()
 
@@ -409,13 +430,20 @@ class PiPupService : Service(), WebServer.Handler {
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun removePopup(removeOverlay: Boolean = false, byButton: Boolean = false) {
+    /// [reason] is pushed with the "popup_removed" event (0.23.0): expired, cancelled,
+    /// button, back or watchdog. "replaced" pushes nothing here; createPopup pushes
+    /// "popup_replaced" once the new popup is up.
+    private fun removePopup(removeOverlay: Boolean = false, byButton: Boolean = false,
+                            reason: String = "cancelled") {
 
         mHandler.removeCallbacksAndMessages(null)
 
         val removed = mCurrentProps
         mCurrentProps = null
         mShownAt = 0L
+        if (removed != null && reason != "replaced") {
+            emit("popup_removed", mapOf("reason" to reason, "removedId" to removed.id))
+        }
 
         // The install-confirmation popup (Android < 12) going away without its button
         // being pressed - it expired, or another popup replaced it - means the user
@@ -469,11 +497,14 @@ class PiPupService : Service(), WebServer.Handler {
                     if (mCurrentProps == null && (mOverlay != null || mPopup != null)) {
                         Log.w(LOG_TAG, "Watchdog: stale overlay without active popup, force removing")
                         mWatchdogCleanups.incrementAndGet()
-                        removePopup(true)
+                        removePopup(true, reason = "watchdog")
                     }
                 } catch (ex: Throwable) {
                     Log.e(LOG_TAG, "Watchdog error: ${ex.message}")
                 }
+                // local check only (no network): a permission lost by a reinstall or
+                // revoked by the system is pushed as soon as it is seen
+                runCatching { checkPermissionsChanged() }
                 mWatchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
             }
         }, WATCHDOG_INTERVAL_MS)
@@ -499,10 +530,19 @@ class PiPupService : Service(), WebServer.Handler {
 
     private fun updateChecksEnabled(): Boolean = prefs().getBoolean(PREF_UPDATE_CHECKS, true)
 
-    /// GET/POST /settings (0.22.0): persistent device settings. Today one key:
-    /// `updateChecks` (true/false) turns the twice-daily GitHub release check off for
-    /// TVs without internet. POST takes it as a query parameter, e.g.
-    /// `POST /settings?updateChecks=false`; both methods answer the current values.
+    /// Push target and update source from prefs into the objects that use them.
+    private fun loadSettings() {
+        val p = prefs()
+        Pusher.url = p.getString(PREF_WEBHOOK, null)
+        UpdateManager.source = p.getString(PREF_UPDATE_SOURCE, null)
+            ?.takeIf { UpdateManager.isValidSource(it) } ?: UpdateManager.DEFAULT_SOURCE
+    }
+
+    /// GET/POST /settings: persistent device settings, POSTed as query parameters,
+    /// e.g. `POST /settings?updateChecks=false`; both methods answer the current values.
+    /// `updateChecks` (0.22.0, true/false): the twice-daily release check.
+    /// `webhook` (0.23.0): URL that receives every state change (see [Pusher]).
+    /// `updateSource` (0.23.0): where releases come from (see [UpdateManager.source]).
     private fun settingsResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
         if (session.method == NanoHTTPD.Method.POST) {
             session.parameters["updateChecks"]?.firstOrNull()?.let { v ->
@@ -513,11 +553,34 @@ class PiPupService : Service(), WebServer.Handler {
                 }
                 prefs().edit().putBoolean(PREF_UPDATE_CHECKS, on).apply()
             }
+            // webhook (0.23.0): http(s) URL to push state changes to; empty = push off
+            session.parameters["webhook"]?.firstOrNull()?.let { v ->
+                if (v.isNotEmpty() && !(v.startsWith("http://") || v.startsWith("https://"))) {
+                    return InvalidRequest("webhook must be an http(s) URL or empty")
+                }
+                prefs().edit().putString(PREF_WEBHOOK, v.ifEmpty { null }).apply()
+            }
+            // updateSource (0.23.0): github:<owner>/<repo>, or an http(s) folder URL
+            // holding releases.json and the APKs; empty = back to the default
+            session.parameters["updateSource"]?.firstOrNull()?.let { v ->
+                if (v.isNotEmpty() && !UpdateManager.isValidSource(v)) {
+                    return InvalidRequest("updateSource must be github:<owner>/<repo> or an http(s) URL")
+                }
+                prefs().edit().putString(PREF_UPDATE_SOURCE, v.ifEmpty { null }).apply()
+            }
+            loadSettings()
+            // a controller that just set its webhook gets the current state at once
+            if (session.parameters.containsKey("webhook")) emit("settings")
         }
         return newFixedLengthResponse(
             NanoHTTPD.Response.Status.OK,
             APPLICATION_JSON,
-            Json.writeValueAsString(mapOf("updateChecks" to updateChecksEnabled()))
+            Json.writeValueAsString(mapOf(
+                "updateChecks" to updateChecksEnabled(),
+                "updateSource" to UpdateManager.source,
+                // the URL itself is the controller's secret: say whether one is set, not what
+                "webhook" to !Pusher.url.isNullOrBlank()
+            ))
         )
     }
 
@@ -622,8 +685,8 @@ class PiPupService : Service(), WebServer.Handler {
                 // down at once. If a new popup lands mid-animation, createPopup's own
                 // removePopup wins and the animation's end action becomes a no-op.
                 val view = mPopup
-                if (view != null) view.animateOut { removePopup(true) }
-                else removePopup(true)
+                if (view != null) view.animateOut { removePopup(true, reason = "expired") }
+                else removePopup(true, reason = "expired")
             }, popup.duration * 1000L) // 1000L: an Int*Int product overflows past ~24.8 days
                                         // and a negative delay removes the popup instantly
         }
@@ -669,7 +732,8 @@ class PiPupService : Service(), WebServer.Handler {
 
             // remove current popup
 
-            removePopup()
+            val previous = mCurrentProps
+            removePopup(reason = "replaced")
 
             // create or reuse the current overlay; the window is only focusable when the
             // popup carries buttons (otherwise it must never steal the remote from the TV app)
@@ -721,7 +785,7 @@ class PiPupService : Service(), WebServer.Handler {
                     // BACK dismisses a focusable (button) popup without firing a callback
                     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                            mHandler.post { removePopup(true) }
+                            mHandler.post { removePopup(true, reason = "back") }
                             return true
                         }
                         return super.dispatchKeyEvent(event)
@@ -761,7 +825,7 @@ class PiPupService : Service(), WebServer.Handler {
                     }
                     // byButton: a confirm-popup dismissed by its own button must keep the
                     // pending install alive (the system dialog was just launched).
-                    mHandler.post { removePopup(removeOverlay = true, byButton = true) }
+                    mHandler.post { removePopup(removeOverlay = true, byButton = true, reason = "button") }
                 }
 
                 it.addView(mPopup, FrameLayout.LayoutParams(
@@ -804,6 +868,8 @@ class PiPupService : Service(), WebServer.Handler {
             // schedule removal
 
             scheduleRemoval(popup)
+            if (previous != null) emit("popup_replaced", mapOf("replacedId" to previous.id))
+            else emit("popup_shown")
             return true
 
         } catch (ex: Throwable) {
@@ -835,7 +901,36 @@ class PiPupService : Service(), WebServer.Handler {
         return if (latch.await(MAIN_SYNC_TIMEOUT_MS, TimeUnit.MILLISECONDS)) result else null
     }
 
-    private fun stateResponse(): NanoHTTPD.Response {
+    private fun stateResponse(): NanoHTTPD.Response = newFixedLengthResponse(
+        NanoHTTPD.Response.Status.OK,
+        APPLICATION_JSON,
+        Json.writeValueAsString(buildState())
+    )
+
+    /// Push one event (0.23.0): the /state JSON plus `event` and [extra]. Built here,
+    /// on the caller's thread, so the body is the state at the moment of the event.
+    private fun emit(event: String, extra: Map<String, Any?> = emptyMap()) {
+        if (Pusher.url.isNullOrBlank()) return
+        try {
+            val body = buildState().apply {
+                put("event", event)
+                putAll(extra)
+            }
+            Pusher.push(event, Json.writeValueAsString(body))
+        } catch (ex: Throwable) {
+            Log.e(LOG_TAG, "push $event: building state failed: ${ex.message}")
+        }
+    }
+
+    private fun checkPermissionsChanged() {
+        val now = Permissions.asMap(this)
+        if (now != mLastPermissions) {
+            mLastPermissions = now
+            emit("permissions")
+        }
+    }
+
+    private fun buildState(): MutableMap<String, Any?> {
         val current = mCurrentProps
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         val state = mutableMapOf<String, Any?>(
@@ -871,6 +966,7 @@ class PiPupService : Service(), WebServer.Handler {
         state["permissions"] = Permissions.asMap(this)
         state["update"] = mapOf(
             "checksEnabled" to updateChecksEnabled(),
+            "source" to UpdateManager.source,
             "available" to UpdateManager.updateAvailable,
             "latest" to UpdateManager.latestVersion,
             "installing" to UpdateManager.isInstalling,
@@ -917,11 +1013,17 @@ class PiPupService : Service(), WebServer.Handler {
                 "secondsAgo" to ((SystemClock.elapsedRealtime() - mLastPopupAt) / 1000)
             )
         }
-        return newFixedLengthResponse(
-            NanoHTTPD.Response.Status.OK,
-            APPLICATION_JSON,
-            Json.writeValueAsString(state)
+        state["push"] = mapOf(
+            // a controller that sees this can stop polling and set a webhook instead
+            "supported" to true,
+            "webhook" to !Pusher.url.isNullOrBlank(),
+            "lastEvent" to Pusher.lastEvent,
+            "lastStatus" to Pusher.lastStatus,
+            "lastError" to Pusher.lastError,
+            "lastSecondsAgo" to Pusher.lastAt.takeIf { it > 0 }
+                ?.let { (System.currentTimeMillis() - it) / 1000 }
         )
+        return state
     }
 
     /// POST /power?state=on|off|toggle - screen on/off for this TV.
@@ -1138,7 +1240,7 @@ class PiPupService : Service(), WebServer.Handler {
                                 OK("id mismatch: visible popup is ${current.id}")
                             } else {
                                 // answer only once the popup is gone from /state (0.17.1)
-                                when (runOnMainSync { removePopup(true); true }) {
+                                when (runOnMainSync { removePopup(true, reason = "cancelled"); true }) {
                                     null -> OK("accepted; main thread busy, removal still queued")
                                     else -> OK()
                                 }
@@ -1303,6 +1405,8 @@ class PiPupService : Service(), WebServer.Handler {
         const val PREF_DEVICE_ID = "device_id"
         const val PREF_UPDATE_ANNOUNCED = "update_announced"
         const val PREF_UPDATE_CHECKS = "update_checks"
+        const val PREF_WEBHOOK = "webhook"
+        const val PREF_UPDATE_SOURCE = "update_source"
         const val UPDATE_POPUP_ID = "pipup-update"
         const val CONFIRM_POPUP_ID = "pipup-update-confirm"
         const val PREF_LAST_RUN_VERSION = "last_run_version"

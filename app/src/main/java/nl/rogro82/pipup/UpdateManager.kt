@@ -33,10 +33,21 @@ import java.util.concurrent.atomic.AtomicLong
 /// versions always show the system's install confirmation on the TV.
 object UpdateManager {
     private const val LOG_TAG = "PiPupUpdate"
-    private const val RELEASES_URL =
-        "https://api.github.com/repos/mhoogenbosch/PiPup/releases/latest"
+    /// Where releases come from (0.23.0), set by the service from prefs:
+    /// `github:<owner>/<repo>` reads that repo's latest release; an `http(s)://`
+    /// folder URL reads `<folder>/releases.json` (GitHub's releases API answer saved
+    /// as is, e.g. a LAN mirror kept by Home Assistant) and takes the first release
+    /// that is neither draft nor prerelease. Its APK is `<folder>/<asset name>`, so a
+    /// TV with no internet can still update.
+    const val DEFAULT_SOURCE = "github:davbebawy/PiPup"
     private const val HA_PIPUP_RELEASES_URL =
-        "https://api.github.com/repos/mhoogenbosch/ha-pipup/releases/latest"
+        "https://api.github.com/repos/davbebawy/ha-pipup/releases/latest"
+    @Volatile var source: String = DEFAULT_SOURCE
+
+    private val GITHUB_SOURCE = Regex("^github:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
+
+    fun isValidSource(value: String): Boolean =
+        GITHUB_SOURCE.matches(value) || value.startsWith("http://") || value.startsWith("https://")
 
     /// Oldest ha-pipup release that can drive EVERY field this app accepts (0.21.0 needs
     /// the `padding` service field, added in ha-pipup 1.17.1). Bump ONLY when a new app
@@ -176,9 +187,16 @@ object UpdateManager {
 
     /// Query the GitHub releases API. Blocking — call from a background thread.
     fun check(): Boolean {
-        refreshHaPipupLatest()
+        val src = source
+        val github = GITHUB_SOURCE.matchEntire(src)
+        // the recommended-integration lookup needs GitHub; a LAN-folder TV has none
+        if (github != null) refreshHaPipupLatest()
+        val folder = if (github == null) src.trimEnd('/') else null
+        val releasesUrl = if (github != null)
+            "https://api.github.com/repos/${github.groupValues[1]}/${github.groupValues[2]}/releases/latest"
+        else "$folder/releases.json"
         return try {
-            val conn = (URL(RELEASES_URL).openConnection() as HttpURLConnection).apply {
+            val conn = (URL(releasesUrl).openConnection() as HttpURLConnection).apply {
                 applyUpdaterTls(this)
                 connectTimeout = NET_TIMEOUT_MS
                 readTimeout = NET_TIMEOUT_MS
@@ -186,17 +204,26 @@ object UpdateManager {
                 setRequestProperty("User-Agent", "PiPup/${BuildConfig.VERSION_NAME}")
             }
             if (conn.responseCode != 200) {
-                // 403 here is almost always the anonymous rate limit (60/h per IP).
-                lastError = "GitHub returned ${conn.responseCode}"
+                // 403 from GitHub is almost always the anonymous rate limit (60/h per IP).
+                lastError = "${if (github != null) "GitHub" else releasesUrl} returned ${conn.responseCode}"
                 Log.w(LOG_TAG, "Update check failed: ${lastError}")
                 return false
             }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val node = Json.readTree(body)
+            val parsed = Json.readTree(body)
+            // a folder holds the releases LIST; pick like the Kiosk Satellite mirror does
+            val node = if (parsed.isArray) parsed.firstOrNull {
+                !it.path("draft").asBoolean(false) && !it.path("prerelease").asBoolean(false)
+            } ?: run {
+                lastError = "no release in $releasesUrl"
+                return false
+            } else parsed
             latestVersion = node.path("tag_name").asText("").removePrefix("v").ifBlank { null }
-            downloadUrl = node.path("assets").firstOrNull {
+            val asset = node.path("assets").firstOrNull {
                 it.path("name").asText("").endsWith(".apk")
-            }?.path("browser_download_url")?.asText()
+            }
+            downloadUrl = if (folder != null) asset?.path("name")?.asText()?.let { "$folder/$it" }
+                else asset?.path("browser_download_url")?.asText()
             lastCheckedAt = System.currentTimeMillis()
             lastError = null
             Log.d(LOG_TAG, "Latest release: $latestVersion (running ${BuildConfig.VERSION_NAME})")

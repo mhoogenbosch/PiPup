@@ -792,6 +792,19 @@ Since 0.22.0. Persistent device settings, kept across restarts and updates. `upd
 `true`) switches the twice-daily GitHub release check on or off: a TV kept off the internet on purpose
 then makes no outbound calls. Both methods answer the current values, e.g. `{"updateChecks":false}`.
 
+Since 0.23.0 (davbebawy fork) two more keys:
+
+- `webhook`: an `http(s)` URL. The app POSTs its `/state` JSON plus an `event` field to it on every
+  change: `popup_shown`, `popup_replaced` (with `replacedId`), `popup_removed` (with `reason`
+  expired / cancelled / button / back / watchdog, and `removedId`), `started`, `screen_on`,
+  `screen_off`, `permissions`, and `settings` right after the webhook is set. A failed POST is
+  retried once after 2 s. Empty turns push off. `/settings` answers only whether one is set: the URL
+  is the controller's secret. `/state.push` shows the last push result.
+- `updateSource`: `github:<owner>/<repo>` (default `github:davbebawy/PiPup`), or an `http(s)` folder
+  URL holding `releases.json` (GitHub's `/releases` answer saved as is) and the APKs under their
+  release names. The first release that is neither draft nor prerelease wins. Empty resets to the
+  default.
+
 ### State
 
 | Property      | Value            |
