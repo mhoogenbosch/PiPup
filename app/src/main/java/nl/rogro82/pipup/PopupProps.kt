@@ -48,7 +48,10 @@ data class PopupProps(
     val padding: Int? = null,
     // 0.19.0: entrance animation (and exit on natural expiry): fade, slide_left,
     // slide_right, slide_top, slide_bottom; null/none = appear instantly (classic).
-    val animation: String? = null
+    val animation: String? = null,
+    // 0.22.0: whole-popup opacity 0..1 (View alpha), so live TV shows through the
+    // popup and its media. null = fully opaque (classic).
+    val opacity: Float? = null
 ) {
     val indefinite: Boolean
         get() = duration <= 0
@@ -83,8 +86,10 @@ data class PopupProps(
         @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
+        // transparent (0.22.0): the WebView paints no background of its own, so a page
+        // whose html/body background is transparent shows the TV picture behind it.
         data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false,
-                       val poster: String? = null): Media()
+                       val poster: String? = null, val transparent: Boolean = false): Media()
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }
 

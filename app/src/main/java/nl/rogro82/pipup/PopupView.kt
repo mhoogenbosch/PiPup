@@ -293,10 +293,14 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     /// Entrance animation (0.19.0). Runs once per *build*: an update-in-place reuses
     /// the view and never comes back here, so a re-notified popup does not keep
     /// sliding in. Unknown names fall back to appearing instantly.
+    /// Resting alpha of the popup: `opacity` (0.22.0), else fully opaque.
+    private val targetAlpha: Float get() = (popup.opacity ?: 1f).coerceIn(0f, 1f)
+
     fun animateIn() {
+        alpha = targetAlpha
         when (popup.animation?.lowercase()) {
             null, "", "none" -> return
-            "fade" -> { alpha = 0f; animate().alpha(1f).setDuration(220).start() }
+            "fade" -> { alpha = 0f; animate().alpha(targetAlpha).setDuration(220).start() }
             "slide_left" -> slideIn(-1f, 0f)
             "slide_right" -> slideIn(1f, 0f)
             "slide_top" -> slideIn(0f, -1f)
@@ -311,8 +315,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         post {
             translationX = dx * (if (width > 0) width.toFloat() else 300f)
             translationY = dy * (if (height > 0) height.toFloat() else 300f)
-            alpha = 0.6f
-            animate().translationX(0f).translationY(0f).alpha(1f).setDuration(220).start()
+            alpha = 0.6f * targetAlpha
+            animate().translationX(0f).translationY(0f).alpha(targetAlpha).setDuration(220).start()
         }
         // hide the pre-layout frame at its final position
         translationX = dx * 3000f; translationY = dy * 3000f
@@ -610,6 +614,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                         }
                     }
                 }
+                // WebView paints white by default; without this a transparent page is white.
+                if (media.transparent) setBackgroundColor(Color.TRANSPARENT)
                 loadUrl(media.uri)
             }
             mWebView = webView

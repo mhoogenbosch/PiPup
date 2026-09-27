@@ -486,7 +486,8 @@ class PiPupService : Service(), WebServer.Handler {
     private fun startUpdateChecker() {
         mWatchdogHandler.postDelayed(object : Runnable {
             override fun run() {
-                Thread {
+                // LAN-only TVs (no route to GitHub) switch this off via /settings (0.22.0).
+                if (updateChecksEnabled()) Thread {
                     if (UpdateManager.check() && UpdateManager.updateAvailable) {
                         maybeAnnounceUpdate()
                     }
@@ -494,6 +495,30 @@ class PiPupService : Service(), WebServer.Handler {
                 mWatchdogHandler.postDelayed(this, UPDATE_CHECK_INTERVAL_MS)
             }
         }, UPDATE_CHECK_FIRST_DELAY_MS)
+    }
+
+    private fun updateChecksEnabled(): Boolean = prefs().getBoolean(PREF_UPDATE_CHECKS, true)
+
+    /// GET/POST /settings (0.22.0): persistent device settings. Today one key:
+    /// `updateChecks` (true/false) turns the twice-daily GitHub release check off for
+    /// TVs without internet. POST takes it as a query parameter, e.g.
+    /// `POST /settings?updateChecks=false`; both methods answer the current values.
+    private fun settingsResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        if (session.method == NanoHTTPD.Method.POST) {
+            session.parameters["updateChecks"]?.firstOrNull()?.let { v ->
+                val on = when (v.lowercase()) {
+                    "true", "1", "on" -> true
+                    "false", "0", "off" -> false
+                    else -> return InvalidRequest("updateChecks must be true or false")
+                }
+                prefs().edit().putBoolean(PREF_UPDATE_CHECKS, on).apply()
+            }
+        }
+        return newFixedLengthResponse(
+            NanoHTTPD.Response.Status.OK,
+            APPLICATION_JSON,
+            Json.writeValueAsString(mapOf("updateChecks" to updateChecksEnabled()))
+        )
     }
 
     /// "Update to vX is being installed" - the visible feedback that pressing Install
@@ -845,6 +870,7 @@ class PiPupService : Service(), WebServer.Handler {
         )
         state["permissions"] = Permissions.asMap(this)
         state["update"] = mapOf(
+            "checksEnabled" to updateChecksEnabled(),
             "available" to UpdateManager.updateAvailable,
             "latest" to UpdateManager.latestVersion,
             "installing" to UpdateManager.isInstalling,
@@ -1059,6 +1085,7 @@ class PiPupService : Service(), WebServer.Handler {
                     when(session.uri) {
                         "/state" -> stateResponse()
                         "/permissions/diagnose" -> diagnoseResponse()
+                        "/settings" -> settingsResponse(session)
                         else -> InvalidRequest("unknown uri: ${session.uri}")
                     }
                 }
@@ -1098,6 +1125,7 @@ class PiPupService : Service(), WebServer.Handler {
                                 OK("update started")
                             }
                         }
+                        "/settings" -> settingsResponse(session)
                         "/power" -> powerResponse(session)
                         "/permissions/fix" -> permissionFixResponse(session)
                         "/permissions/diagnose" -> diagnoseResponse()
@@ -1274,6 +1302,7 @@ class PiPupService : Service(), WebServer.Handler {
         const val PREFS_NAME = "pipup"
         const val PREF_DEVICE_ID = "device_id"
         const val PREF_UPDATE_ANNOUNCED = "update_announced"
+        const val PREF_UPDATE_CHECKS = "update_checks"
         const val UPDATE_POPUP_ID = "pipup-update"
         const val CONFIRM_POPUP_ID = "pipup-update-confirm"
         const val PREF_LAST_RUN_VERSION = "last_run_version"

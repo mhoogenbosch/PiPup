@@ -444,6 +444,19 @@ path, which on some Fire TVs briefly renegotiates HDMI audio.
 { "id": "doorbell", "title": "Front door", "sound": "default", "soundVolume": 0.8 }
 ```
 
+`opacity` (since 0.22.0, 0..1, default 1): draws the whole popup, media included, at that alpha, so the
+picture behind it stays visible. Works with every media type and with `animation`.
+
+`transparent` (since 0.22.0, `web` media only, default `false`): the WebView paints no background, so a
+page with a transparent `html, body { background: transparent }` shows the TV through it. Combine with
+`"backgroundColor": "#00000000"` and `"padding": 0` for a frameless, see-through overlay:
+
+```json
+{ "id": "score", "duration": 0, "padding": 0, "backgroundColor": "#00000000",
+  "media": { "web": { "uri": "http://192.168.1.96:8123/local/score.html",
+    "width": 420, "height": 900, "transparent": true } } }
+```
+
 `padding` (since 0.19.1, px, default 20): the popup's outer margin around content; `0` gives a
 near-borderless look.
 
@@ -767,6 +780,17 @@ would otherwise hide a perfectly working button (`adb shell dumpsys package quer
 administration at all (`hasSystemFeature(FEATURE_DEVICE_ADMIN)` is false) — a different answer from
 "not granted", and worth distinguishing because `dpm set-active-admin` reports `Success` there
 anyway.
+
+### Settings
+
+| Property      | Value                               |
+| ------------- | ----------------------------------- |
+| Path:         | /settings[?updateChecks=true\|false] |
+| Method:       | GET or POST                         |
+
+Since 0.22.0. Persistent device settings, kept across restarts and updates. `updateChecks` (default
+`true`) switches the twice-daily GitHub release check on or off: a TV kept off the internet on purpose
+then makes no outbound calls. Both methods answer the current values, e.g. `{"updateChecks":false}`.
 
 ### State
 
