@@ -537,9 +537,15 @@ next to the icon, and the `media` image (if any) stays below.
 
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.
-- `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical
-  content only reschedules the removal timer — the view (and a playing video/web stream) is kept as-is.
-  Different content (or no `id`) rebuilds the popup as before.
+- `id` (string, optional): identifies the popup. Since 0.24.0 **each id is its own popup**: a popup
+  with a new id opens beside the ones already on screen (newest on top), each in its own window sized
+  to its content. Popups without an `id` share one slot and replace each other. There is no limit on
+  how many are up; what a TV can draw smoothly depends on the TV (one video at a time is typical for
+  a 1-2 GB TV). Re-sending the same `id` with identical content only reschedules the removal timer;
+  the view (and a playing video/web stream) is kept as-is. Same `id` with new content redraws that
+  popup in place, keeping its place in the stack.
+- `bringToFront` (since 0.24.0, default `false`): a redraw of a popup already on screen opens it on
+  top of the others instead of in its old place.
 
 #### multipart/form-data (uploaded image file)
 
@@ -595,10 +601,13 @@ Color-properties are in `[AA]RRGGBB` where the alpha channel is optional, e.g. #
 | Path:         | /cancel          |
 | Method:       | POST             |
 
-Removes the currently visible popup (if any). Optionally pass `?id=<popup id>` to only cancel when
-the visible popup has that id — e.g. `POST /cancel?id=doorbell`. If the visible popup has a different
-id the call is a no-op (HTTP 200 with an explanatory message), so a delayed "hide camera" automation
-cannot accidentally cancel a newer, unrelated popup.
+Since 0.24.0 several popups can be up at once:
+
+- `POST /cancel?id=doorbell` removes the popup with that id and leaves the others.
+- `POST /cancel` (no id) removes the popup that was sent without an id.
+- `POST /cancel?all=true` removes every popup.
+
+When nothing matches, the call is a no-op (HTTP 200 with an explanatory message).
 
 ### Screen on/off
 
@@ -795,7 +804,8 @@ then makes no outbound calls. Both methods answer the current values, e.g. `{"up
 Since 0.23.0 (davbebawy fork) two more keys:
 
 - `webhook`: an `http(s)` URL. The app POSTs its `/state` JSON plus an `event` field to it on every
-  change: `popup_shown`, `popup_replaced` (with `replacedId`), `popup_removed` (with `reason`
+  change: `popup_shown` (with `shownId`, since 0.24.0), `popup_replaced` (with `shownId` and
+  `replacedId`; since 0.24.0 both are the id that was redrawn), `popup_removed` (with `reason`
   expired / cancelled / button / back / watchdog, and `removedId`), `started`, `screen_on`,
   `screen_off`, `permissions`, and `settings` right after the webhook is set. A failed POST is
   retried once after 2 s. Empty turns push off. `/settings` answers only whether one is set: the URL
@@ -827,6 +837,10 @@ Returns the current state as JSON:
   "uptime": 86400,
   "device": { "model": "AFTKA", "manufacturer": "Amazon", "android": "9" },
   "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 },
+  "popups": [
+    { "id": "fantasy", "position": "TopRight", "duration": 0, "indefinite": true, "elapsed": 900, "media": "web" },
+    { "id": "doorbell", "position": "BottomRight", "duration": 0, "indefinite": true, "elapsed": 42, "media": "video" }
+  ],
   "power": { "canWake": true, "canSleep": true, "sleepMethod": "device_admin" },
   "permissions": {
     "overlay": true, "installPackages": true, "autoStart": null,
@@ -835,6 +849,10 @@ Returns the current state as JSON:
   }
 }
 ```
+
+Since v0.24.0 `popups` lists every popup on screen in stack order (the last one is on top; `id` is
+`null` for the popup sent without an id). `visible` is true while any popup is up, and `popup` is the
+one on top, so a caller written for one popup at a time keeps working.
 
 Since v0.7.0 `permissions` reports what the app was actually granted, and `power` what it can do with
 the screen (see [Screen on/off](#screen-onoff)). `overlay: false` is the one to watch: popups are then

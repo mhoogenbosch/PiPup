@@ -35,17 +35,27 @@ import java.util.concurrent.TimeUnit
 
 class PiPupService : Service(), WebServer.Handler {
     private val mHandler: Handler = Handler(Looper.getMainLooper())
-    // Hand-off of HTTP requests (/notify, /cancel) to the main thread. Deliberately NOT
-    // mHandler: createPopup/removePopup call mHandler.removeCallbacksAndMessages(null),
-    // which would also drop a second request that was still queued behind the first —
-    // that popup then silently never appeared while its caller had been told OK.
+    // Hand-off of HTTP requests (/notify, /cancel) to the main thread, kept apart from
+    // mHandler so popup timers and queued requests never share a queue.
     private val mRequestHandler: Handler = Handler(Looper.getMainLooper())
-    private var mOverlay: FrameLayout? = null
-    private var mPopup: PopupView? = null
-    // Written on the main thread, read by the NanoHTTPD worker thread in /state:
-    // @Volatile / atomics guarantee the HTTP reader sees a consistent, published
-    // value instead of a torn or stale one (the sensors HA polls feed off this).
-    @Volatile private var mCurrentProps: PopupProps? = null
+
+    /// One popup on screen (0.24.0): its own overlay window, sized to its content.
+    private class Shown(
+        val key: String,          // popup id; "" = the slot shared by popups without an id
+        val window: FrameLayout,
+        var view: PopupView,
+        var props: PopupProps,
+        var shownAt: Long,
+        var expire: Runnable? = null
+    )
+    /// Every popup on screen, in stack order (last = on top). Main thread only.
+    private val mShown = LinkedHashMap<String, Shown>()
+    /// Immutable copy of mShown for readers on other threads (/state on the NanoHTTPD
+    /// worker): republished after every change, so a reader never sees a torn map.
+    private data class ShownInfo(val props: PopupProps, val shownAt: Long)
+    @Volatile private var mShownList: List<ShownInfo> = emptyList()
+    /// Windows whose removal threw; the watchdog removes them again.
+    private val mStaleWindows = mutableListOf<FrameLayout>()
     // 0.18.0: whether the system screensaver (DreamService / ambient mode) is showing. There is
     // no public getter, so it is tracked from the DREAMING_STARTED/STOPPED broadcasts; unknown
     // (false) until the first transition after this service started.
@@ -70,7 +80,6 @@ class PiPupService : Service(), WebServer.Handler {
     }
     /// Permissions as last pushed; a difference is pushed as a "permissions" event.
     @Volatile private var mLastPermissions: Map<String, Any?>? = null
-    @Volatile private var mShownAt: Long = 0L
     // Last *received* popup (survives dismiss/expiry) — shown on the status screen and
     // in /state so you can verify at the TV what HA actually sent.
     @Volatile private var mLastPopup: PopupProps? = null
@@ -430,74 +439,79 @@ class PiPupService : Service(), WebServer.Handler {
         notificationManager.createNotificationChannel(channel)
     }
 
-    /// [reason] is pushed with the "popup_removed" event (0.23.0): expired, cancelled,
-    /// button, back or watchdog. "replaced" pushes nothing here; createPopup pushes
-    /// "popup_replaced" once the new popup is up.
-    private fun removePopup(removeOverlay: Boolean = false, byButton: Boolean = false,
-                            reason: String = "cancelled") {
-
-        mHandler.removeCallbacksAndMessages(null)
-
-        val removed = mCurrentProps
-        mCurrentProps = null
-        mShownAt = 0L
-        if (removed != null && reason != "replaced") {
-            emit("popup_removed", mapOf("reason" to reason, "removedId" to removed.id))
-        }
+    /// Remove the popup in slot [key] ("" = the id-less slot). Pushes "popup_removed"
+    /// with [reason]: expired, cancelled, button, back or watchdog. Returns false when
+    /// no such popup is on screen.
+    private fun removePopup(key: String, reason: String = "cancelled",
+                            byButton: Boolean = false): Boolean {
+        val removed = mShown.remove(key) ?: return false
+        removed.expire?.let { mHandler.removeCallbacks(it) }
+        removed.expire = null
+        publishShown()
+        emit("popup_removed", mapOf("reason" to reason, "removedId" to removed.props.id))
 
         // The install-confirmation popup (Android < 12) going away without its button
         // being pressed - it expired, or another popup replaced it - means the user
         // never confirmed. Release the pending state so /state stops reporting an
         // install in progress for 15 minutes and the update can be retried.
-        if (!byButton && removed?.id == CONFIRM_POPUP_ID && UpdateManager.pendingUserAction) {
+        if (!byButton && removed.props.id == CONFIRM_POPUP_ID && UpdateManager.pendingUserAction) {
             UpdateManager.abandonPending()
         }
 
         // every step guarded: a throwing WebView/VideoView teardown or WindowManager call
         // used to abort the removal halfway, leaving the popup visible on screen while the
         // state already said it was gone (the "popup stays on TV" reports)
+        destroyView(removed.view)
+        removeWindow(removed.window)
+        return true
+    }
 
-        mPopup?.let {
-            try {
-                it.destroy()
-            } catch (ex: Throwable) {
-                Log.e(LOG_TAG, "Popup destroy failed: ${ex.message}")
-            }
-        }
-        mPopup = null
+    private fun removeAllPopups(reason: String = "cancelled") {
+        mShown.keys.toList().forEach { removePopup(it, reason) }
+    }
 
-        mOverlay?.let { overlay ->
-            try {
-                overlay.removeAllViews()
-            } catch (ex: Throwable) {
-                Log.e(LOG_TAG, "Overlay removeAllViews failed: ${ex.message}")
-            }
-            if (removeOverlay) {
-                try {
-                    val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                    wm.removeViewImmediate(overlay)
-                    mOverlay = null
-                } catch (ex: IllegalArgumentException) {
-                    mOverlay = null // already detached
-                } catch (ex: Throwable) {
-                    // keep the reference: the watchdog retries the removal
-                    Log.e(LOG_TAG, "Overlay removal failed (watchdog will retry): ${ex.message}")
-                }
-            }
+    private fun destroyView(view: PopupView) {
+        try {
+            view.destroy()
+        } catch (ex: Throwable) {
+            Log.e(LOG_TAG, "Popup destroy failed: ${ex.message}")
         }
     }
 
-    /// consistency watchdog: no active popup should ever leave an overlay behind.
-    /// NB: runs on its own handler — mHandler gets removeCallbacksAndMessages(null) on
-    /// every removePopup, which would silently kill a watchdog scheduled there.
+    private fun removeWindow(window: FrameLayout) {
+        try {
+            window.removeAllViews()
+        } catch (ex: Throwable) {
+            Log.e(LOG_TAG, "Window removeAllViews failed: ${ex.message}")
+        }
+        try {
+            (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeViewImmediate(window)
+        } catch (ex: IllegalArgumentException) {
+            // already detached
+        } catch (ex: Throwable) {
+            // the watchdog retries the removal
+            Log.e(LOG_TAG, "Window removal failed (watchdog will retry): ${ex.message}")
+            mStaleWindows.add(window)
+        }
+    }
+
+    /// Republish the popup list for other threads (see mShownList).
+    private fun publishShown() {
+        mShownList = mShown.values.map { ShownInfo(it.props, it.shownAt) }
+    }
+
+    /// consistency watchdog: a window whose removal threw must not stay on screen.
+    /// Runs on its own handler, apart from the popup timers on mHandler.
     private fun startWatchdog() {
         mWatchdogHandler.postDelayed(object : Runnable {
             override fun run() {
                 try {
-                    if (mCurrentProps == null && (mOverlay != null || mPopup != null)) {
-                        Log.w(LOG_TAG, "Watchdog: stale overlay without active popup, force removing")
-                        mWatchdogCleanups.incrementAndGet()
-                        removePopup(true, reason = "watchdog")
+                    if (mStaleWindows.isNotEmpty()) {
+                        Log.w(LOG_TAG, "Watchdog: ${mStaleWindows.size} stale window(s), removing again")
+                        val stale = mStaleWindows.toList()
+                        mStaleWindows.clear()
+                        stale.forEach { removeWindow(it) }
+                        mWatchdogCleanups.addAndGet((stale.size - mStaleWindows.size).toLong())
                     }
                 } catch (ex: Throwable) {
                     Log.e(LOG_TAG, "Watchdog error: ${ex.message}")
@@ -511,7 +525,7 @@ class PiPupService : Service(), WebServer.Handler {
     }
 
     /// Periodic self-update check against the fork's GitHub releases. Runs on the
-    /// watchdog handler (mHandler is cleared on every popup removal) and announces a
+    /// watchdog handler and announces a
     /// new version once, on screen, with an Install button — sideloaded TVs have no
     /// store, and not every user has adb.
     private fun startUpdateChecker() {
@@ -638,7 +652,7 @@ class PiPupService : Service(), WebServer.Handler {
         // small delay: right after MY_PACKAGE_REPLACED the window manager is not always
         // ready for our overlay yet
         mHandler.postDelayed({
-            if (mCurrentProps == null) {
+            if (mShown.isEmpty()) {
                 createPopup(
                     PopupProps(
                         duration = 10,
@@ -659,7 +673,7 @@ class PiPupService : Service(), WebServer.Handler {
         if (prefs.getString(PREF_UPDATE_ANNOUNCED, null) == version) return
 
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (!power.isInteractive || mCurrentProps != null) return
+        if (!power.isInteractive || mShownList.isNotEmpty()) return
 
         prefs.edit().putString(PREF_UPDATE_ANNOUNCED, version).apply()
         mHandler.post {
@@ -676,25 +690,125 @@ class PiPupService : Service(), WebServer.Handler {
         }
     }
 
-    private fun scheduleRemoval(popup: PopupProps) {
+    private fun scheduleRemoval(entry: Shown) {
+        entry.expire?.let { mHandler.removeCallbacks(it) }
+        entry.expire = null
         // duration <= 0 means: show until /cancel or until replaced
-        if (!popup.indefinite) {
-            mHandler.postDelayed({
-                // Natural expiry is the one removal nobody is waiting on, so it may
-                // animate (0.19.0); every other path (replace, /cancel, buttons) tears
-                // down at once. If a new popup lands mid-animation, createPopup's own
-                // removePopup wins and the animation's end action becomes a no-op.
-                val view = mPopup
-                if (view != null) view.animateOut { removePopup(true, reason = "expired") }
-                else removePopup(true, reason = "expired")
-            }, popup.duration * 1000L) // 1000L: an Int*Int product overflows past ~24.8 days
-                                        // and a negative delay removes the popup instantly
+        if (entry.props.indefinite) return
+        val view = entry.view
+        val expire = Runnable {
+            // Natural expiry is the one removal nobody is waiting on, so it may
+            // animate (0.19.0); every other path (replace, /cancel, buttons) tears
+            // down at once. The identity checks make the animation's end a no-op
+            // when the popup was cancelled or redrawn in the meantime.
+            if (mShown[entry.key] === entry && entry.view === view) {
+                view.animateOut {
+                    if (mShown[entry.key] === entry && entry.view === view) {
+                        removePopup(entry.key, reason = "expired")
+                    }
+                }
+            }
+        }
+        entry.expire = expire
+        mHandler.postDelayed(expire, entry.props.duration * 1000L) // 1000L: an Int*Int product
+        // overflows past ~24.8 days and a negative delay removes the popup instantly
+    }
+
+    /// Slot of a popup: its id, or "" for every popup without one (they replace each other).
+    private fun keyOf(id: String?): String = id?.takeIf { it.isNotEmpty() } ?: ""
+
+    /// Window of one popup (0.24.0): sized to its content and placed by gravity, so
+    /// several popups sit side by side. Only a popup with buttons takes input.
+    @Suppress("DEPRECATION")
+    private fun windowParams(popup: PopupProps, key: String): WindowManager.LayoutParams {
+        val layoutFlags: Int = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            // Android 6/7 (< O): TYPE_SYSTEM_ALERT draws over other apps with the
+            // SYSTEM_ALERT_WINDOW permission (which PiPup is granted) and can take
+            // input focus, so buttons still work. TYPE_TOAST would show but never
+            // focus, and was restricted from 7.1 on.
+            else -> WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+        }
+
+        val windowFlags = if (popup.buttons.isNotEmpty())
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        else {
+            // A button-less popup must never take input. On Android < 8 the overlay is a
+            // TYPE_SYSTEM_ALERT window, which was reported to swallow the remote's D-pad/Back/Home
+            // on Android 6 until the popup expired; add FLAG_NOT_TOUCHABLE there so the window is
+            // fully input-transparent and keys reach the launcher behind it. On 8+ the
+            // TYPE_APPLICATION_OVERLAY + FLAG_NOT_FOCUSABLE already passes input through, so leave
+            // that path unchanged.
+            var f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+                f = f or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            f
+        }
+
+        return WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            layoutFlags,
+            windowFlags,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = when (popup.position) {
+                PopupProps.Position.TopRight -> Gravity.TOP or Gravity.END
+                PopupProps.Position.TopLeft -> Gravity.TOP or Gravity.START
+                PopupProps.Position.BottomRight -> Gravity.BOTTOM or Gravity.END
+                PopupProps.Position.BottomLeft -> Gravity.BOTTOM or Gravity.START
+                PopupProps.Position.Center -> Gravity.CENTER
+            }
+            // the classic 20 px margin from the screen edge (was the full-screen overlay's padding)
+            val margin = if (popup.position == PopupProps.Position.Center) 0 else SCREEN_MARGIN_PX
+            x = margin
+            y = margin
+            title = "pipup-${key.ifEmpty { "popup" }}"
         }
     }
 
-    @Suppress("DEPRECATION")
+    /// Build the view of [popup] and wire its callbacks to slot [key].
+    private fun buildView(popup: PopupProps, key: String): PopupView {
+        val view = PopupView.build(this, popup)
+        view.onFirstFrame = { ms -> mLastFirstFrameMs = ms }
+        view.onButton = { btn ->
+            // Use the props shown now, not this closure's `popup`: an update-in-place
+            // reuses the view but can carry a new callback URL.
+            val shown = mShown[key]?.props ?: popup
+            // The app's own update popups are handled locally; they have no
+            // callback URL and must not be mistaken for user buttons.
+            if (shown.id == UPDATE_POPUP_ID) {
+                mHandler.post { showInstallingPopup() }
+                Thread { UpdateManager.installLatest(this) }.start()
+            } else if (shown.id == CONFIRM_POPUP_ID) {
+                // Started from a button press = this app has a visible window,
+                // so the system dialog launches reliably and keeps focus.
+                UpdateManager.pendingConfirm?.let { confirm ->
+                    runCatching { startActivity(confirm) }
+                        .onFailure { Log.e(LOG_TAG, "Cannot show install prompt", it) }
+                }
+            } else {
+                sendButtonCallback(shown, btn)
+            }
+            // byButton: a confirm-popup dismissed by its own button must keep the
+            // pending install alive (the system dialog was just launched).
+            mHandler.post { removePopup(key, reason = "button", byButton = true) }
+        }
+        return view
+    }
+
+    private fun contentParams() = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+
     /// Returns true when the popup is on screen (or updated in place) and /state reflects
     /// it; false when building it threw. /notify waits for this result before answering.
+    ///
+    /// 0.24.0: each id is its own window, so a popup with a new id opens beside the
+    /// others; popups without an id share one slot. Same id and content: only the timer
+    /// restarts. Same id, new content: the view is swapped inside its window, which keeps
+    /// its place in the stack, unless `bringToFront` asks for a new window on top.
     private fun createPopup(popup: PopupProps): Boolean {
         try {
 
@@ -704,22 +818,22 @@ class PiPupService : Service(), WebServer.Handler {
             mLastPopupAt = SystemClock.elapsedRealtime()
             mLastFirstFrameMs = null
 
+            val key = keyOf(popup.id)
+            val current = mShown[key]
+
             // update-in-place: same id and same content -> keep the view (and its
             // video/web stream) alive and only reschedule the removal timer
-
-            val current = mCurrentProps
-            if (mPopup != null && current?.id != null &&
-                current.id == popup.id && current.sameContent(popup)) {
+            if (current != null && key.isNotEmpty() && current.props.sameContent(popup)) {
 
                 Log.d(LOG_TAG, "Popup ${popup.id} unchanged: rescheduling removal only")
 
-                mHandler.removeCallbacksAndMessages(null)
                 // still speak when the tts text changed (content comparison ignores tts)
-                if (!popup.tts.isNullOrBlank() && popup.tts != current.tts) {
+                if (!popup.tts.isNullOrBlank() && popup.tts != current.props.tts) {
                     speak(popup.tts, popup.ttsLanguage)
                 }
-                mCurrentProps = popup
-                scheduleRemoval(popup)
+                current.props = popup
+                publishShown()
+                scheduleRemoval(current)
                 return true
             }
 
@@ -730,66 +844,47 @@ class PiPupService : Service(), WebServer.Handler {
                 PowerController.wake(this)
             }
 
-            // remove current popup
-
-            val previous = mCurrentProps
-            removePopup(reason = "replaced")
-
-            // create or reuse the current overlay; the window is only focusable when the
-            // popup carries buttons (otherwise it must never steal the remote from the TV app)
-
-            @Suppress("DEPRECATION")
-            val layoutFlags: Int = when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                // Android 6/7 (< O): TYPE_SYSTEM_ALERT draws over other apps with the
-                // SYSTEM_ALERT_WINDOW permission (which PiPup is granted) and can take
-                // input focus, so buttons still work. TYPE_TOAST would show but never
-                // focus, and was restricted from 7.1 on.
-                else -> WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
-            }
-
-            val windowFlags = if (popup.buttons.isNotEmpty())
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-            else {
-                // A button-less popup must never take input. On Android < 8 the overlay is a
-                // TYPE_SYSTEM_ALERT window, which was reported to swallow the remote's D-pad/Back/Home
-                // on Android 6 until the popup expired; add FLAG_NOT_TOUCHABLE there so the window is
-                // fully input-transparent and keys reach the launcher behind it. On 8+ the
-                // TYPE_APPLICATION_OVERLAY + FLAG_NOT_FOCUSABLE already passes input through, so leave
-                // that path unchanged.
-                var f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
-                    f = f or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                f
-            }
-
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                layoutFlags,
-                windowFlags,
-                PixelFormat.TRANSLUCENT
-            )
-
             val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val params = windowParams(popup, key)
+            val view = buildView(popup, key)
+            val now = SystemClock.elapsedRealtime()
 
-            mOverlay = when (val overlay = mOverlay) {
-                is FrameLayout -> overlay.also {
-                    try {
-                        wm.updateViewLayout(it, params)
-                    } catch (ex: Throwable) {
-                        Log.e(LOG_TAG, "updateViewLayout failed: ${ex.message}")
-                    }
+            val entry: Shown
+            if (current != null && !popup.bringToFront) {
+                // redraw in place: new view in the same window, same place in the stack
+                current.expire?.let { mHandler.removeCallbacks(it) }
+                current.expire = null
+                destroyView(current.view)
+                current.window.removeAllViews()
+                current.window.addView(view, contentParams())
+                try {
+                    wm.updateViewLayout(current.window, params)
+                } catch (ex: Throwable) {
+                    Log.e(LOG_TAG, "updateViewLayout failed: ${ex.message}")
                 }
-                else -> object : FrameLayout(this@PiPupService) {
+                current.view = view
+                current.props = popup
+                current.shownAt = now
+                entry = current
+            } else {
+                if (current != null) {
+                    // bringToFront: drop the old window without a "removed" push; the
+                    // "replaced" push below says what happened
+                    mShown.remove(key)
+                    current.expire?.let { mHandler.removeCallbacks(it) }
+                    destroyView(current.view)
+                    removeWindow(current.window)
+                }
+                val window = object : FrameLayout(this@PiPupService) {
                     // BACK dismisses a focusable (button) popup without firing a callback
                     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                            mHandler.post { removePopup(true, reason = "back") }
+                            mHandler.post { removePopup(key, reason = "back") }
                             return true
                         }
                         return super.dispatchKeyEvent(event)
                     }
+<<<<<<< HEAD
                 }.apply {
 
                     setPadding(20, 20, 20, 20)
@@ -849,14 +944,23 @@ class PiPupService : Service(), WebServer.Handler {
                 if (popup.buttons.isNotEmpty()) {
                     // focus the first button so a single OK press activates it
                     mPopup?.requestFocus()
+=======
+>>>>>>> 761b6ec (Several popups at once: one window per popup id, /state.popups, /cancel all (0.24.0))
                 }
+                window.addView(view, contentParams())
+                wm.addView(window, params)
+                entry = Shown(key, window, view, popup, now)
+                mShown[key] = entry
             }
-
-            mCurrentProps = popup
-            mShownAt = SystemClock.elapsedRealtime()
+            publishShown()
             mPopupsShown.incrementAndGet()
 
-            mPopup?.animateIn()
+            if (popup.buttons.isNotEmpty()) {
+                // focus the first button so a single OK press activates it
+                view.requestFocus()
+            }
+
+            view.animateIn()
 
             if (!popup.tts.isNullOrBlank()) {
                 speak(popup.tts, popup.ttsLanguage)
@@ -865,11 +969,10 @@ class PiPupService : Service(), WebServer.Handler {
                 SoundPlayer.play(this, popup.sound, popup.soundVolume)
             }
 
-            // schedule removal
-
-            scheduleRemoval(popup)
-            if (previous != null) emit("popup_replaced", mapOf("replacedId" to previous.id))
-            else emit("popup_shown")
+            scheduleRemoval(entry)
+            if (current != null) emit("popup_replaced", mapOf("shownId" to popup.id, "replacedId" to current.props.id))
+            else emit("popup_shown", mapOf("shownId" to popup.id))
+            Log.d(LOG_TAG, "Popup ${popup.id ?: "(no id)"} up, ${mShown.size} on screen")
             return true
 
         } catch (ex: Throwable) {
@@ -931,14 +1034,15 @@ class PiPupService : Service(), WebServer.Handler {
     }
 
     private fun buildState(): MutableMap<String, Any?> {
-        val current = mCurrentProps
+        val shown = mShownList
+        val top = shown.lastOrNull()
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         val state = mutableMapOf<String, Any?>(
             "app" to "PiPup",
             "version" to BuildConfig.VERSION_NAME,
             "id" to deviceId(),
             "name" to deviceName(),
-            "visible" to (current != null),
+            "visible" to shown.isNotEmpty(),
             "screenOn" to powerManager.isInteractive,
             "dreaming" to mDreaming,
             "popupsShown" to mPopupsShown.get(),
@@ -950,12 +1054,25 @@ class PiPupService : Service(), WebServer.Handler {
                 "android" to Build.VERSION.RELEASE
             )
         )
-        if (current != null) {
+        val now = SystemClock.elapsedRealtime()
+        // the popup on top of the stack: what a caller from before 0.24.0 knows as "the" popup
+        if (top != null) {
             state["popup"] = mapOf(
-                "id" to current.id,
-                "duration" to current.duration,
-                "indefinite" to current.indefinite,
-                "elapsed" to ((SystemClock.elapsedRealtime() - mShownAt) / 1000)
+                "id" to top.props.id,
+                "duration" to top.props.duration,
+                "indefinite" to top.props.indefinite,
+                "elapsed" to ((now - top.shownAt) / 1000)
+            )
+        }
+        // 0.24.0: every popup on screen, in stack order (last = on top)
+        state["popups"] = shown.map { info ->
+            mapOf(
+                "id" to info.props.id,
+                "position" to info.props.position.name,
+                "duration" to info.props.duration,
+                "indefinite" to info.props.indefinite,
+                "elapsed" to ((now - info.shownAt) / 1000),
+                "media" to (mediaInfo(info.props)?.get("type"))
             )
         }
         state["power"] = mapOf(
@@ -1232,18 +1349,17 @@ class PiPupService : Service(), WebServer.Handler {
                         "/permissions/fix" -> permissionFixResponse(session)
                         "/permissions/diagnose" -> diagnoseResponse()
                         "/cancel" -> {
-                            // optional ?id=<popup id>: only cancel when it matches the visible popup
+                            // 0.24.0: ?id=<popup id> removes that popup; no id removes the
+                            // popup without an id; ?all=true removes every popup.
+                            // Answers only once the popup is gone from /state (0.17.1).
+                            val all = session.parameters["all"]?.firstOrNull()?.lowercase() in setOf("true", "1", "on")
                             val id = session.parameters["id"]?.firstOrNull()
-                            val current = mCurrentProps
-
-                            if (id != null && current != null && current.id != id) {
-                                OK("id mismatch: visible popup is ${current.id}")
-                            } else {
-                                // answer only once the popup is gone from /state (0.17.1)
-                                when (runOnMainSync { removePopup(true, reason = "cancelled"); true }) {
-                                    null -> OK("accepted; main thread busy, removal still queued")
-                                    else -> OK()
-                                }
+                            when (runOnMainSync {
+                                if (all) { removeAllPopups(); true } else removePopup(keyOf(id))
+                            }) {
+                                null -> OK("accepted; main thread busy, removal still queued")
+                                true -> OK()
+                                false -> OK(if (id.isNullOrEmpty()) "no popup without an id" else "no popup with id $id")
                             }
                         }
                         "/notify" -> {
@@ -1366,7 +1482,8 @@ class PiPupService : Service(), WebServer.Handler {
                                             animation = params["animation"],
                                             padding = params["padding"]?.toIntOrNull(),
                                             sound = params["sound"],
-                                            soundVolume = params["soundVolume"]?.toFloatOrNull()
+                                            soundVolume = params["soundVolume"]?.toFloatOrNull(),
+                                            bringToFront = params["bringToFront"]?.toBoolean() ?: false
                                         )
                                     }
                                     else -> throw Exception("invalid content-type")
@@ -1426,6 +1543,8 @@ class PiPupService : Service(), WebServer.Handler {
         // Building a popup view takes tens of ms; 2 s only elapses when the UI thread is
         // stuck, and then a held-open HTTP connection would help nobody.
         const val MAIN_SYNC_TIMEOUT_MS = 2_000L
+        // gap between a popup and the screen edge
+        const val SCREEN_MARGIN_PX = 20
 
         fun OK(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "text/plain", message)
         fun InvalidRequest(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.BAD_REQUEST, "text/plain", "invalid request: $message")
