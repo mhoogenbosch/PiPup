@@ -752,6 +752,8 @@ class PiPupService : Service(), WebServer.Handler {
                         PopupProps.Position.BottomRight -> Gravity.BOTTOM or Gravity.END
                         PopupProps.Position.BottomLeft -> Gravity.BOTTOM or Gravity.START
                         PopupProps.Position.Center -> Gravity.CENTER
+                        PopupProps.Position.TopCenter -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                        PopupProps.Position.BottomCenter -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                     }
                 })
 

@@ -96,7 +96,9 @@ data class PopupProps(
         TopLeft,    // 1
         BottomRight, // 2
         BottomLeft, // 3
-        Center      // 4
+        Center,     // 4
+        TopCenter,  // 5
+        BottomCenter // 6
     }
 
     companion object {
