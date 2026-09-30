@@ -7,7 +7,15 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
-## [v0.21.1] — 2026-09-01 (self-update TLS fix reaches the redirect hop)
+## [v0.22.0] — 2026-09-30 (top and bottom center positions)
+### Added
+- Two popup positions: **`TopCenter` (5)** and **`BottomCenter` (6)**, centered along the top or bottom
+  edge. The existing position numbers 0–4 are unchanged. Contributed by
+  [@andrewm1205](https://github.com/andrewm1205) in #52; the Home Assistant side is
+  [ha-pipup v1.19.0](https://github.com/mhoogenbosch/ha-pipup/releases/tag/v1.19.0) (`top_center` /
+  `bottom_center`). Older apps reject these numbers, which is why ha-pipup checks the app version first.
+
+ — 2026-09-01 (self-update TLS fix reaches the redirect hop)
 ### Fixed
 - 0.19.3's bundled ISRG Root X1 never protected the actual download: the GitHub asset URL redirects
   (github.com → release-assets.githubusercontent.com) and `HttpURLConnection`'s automatic redirect makes a
