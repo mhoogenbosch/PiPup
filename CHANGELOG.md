@@ -7,6 +7,14 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.23.0] — 2026-10-03 (self-update progress)
+### Added
+- `/state.update` reports where a self-update is: **`phase`** (`downloading`, `installing`,
+  `awaiting_confirmation`; `null` when idle) and **`progress`** (0–100 while downloading, from the
+  `Content-Length` of the APK; `null` in the other phases), plus `downloadedBytes` and `totalBytes`.
+  [ha-pipup v1.20.0](https://github.com/mhoogenbosch/ha-pipup/releases/tag/v1.20.0) shows this as the
+  update percentage in Home Assistant. Purely additive: older integrations ignore the new fields.
+
 ## [v0.22.0] — 2026-09-30 (top and bottom center positions)
 ### Added
 - Two popup positions: **`TopCenter` (5)** and **`BottomCenter` (6)**, centered along the top or bottom
@@ -15,7 +23,7 @@ full story (English and Dutch) and the APK.
   [ha-pipup v1.19.0](https://github.com/mhoogenbosch/ha-pipup/releases/tag/v1.19.0) (`top_center` /
   `bottom_center`). Older apps reject these numbers, which is why ha-pipup checks the app version first.
 
- — 2026-09-01 (self-update TLS fix reaches the redirect hop)
+## [v0.21.1] — 2026-09-01 (self-update TLS fix reaches the redirect hop)
 ### Fixed
 - 0.19.3's bundled ISRG Root X1 never protected the actual download: the GitHub asset URL redirects
   (github.com → release-assets.githubusercontent.com) and `HttpURLConnection`'s automatic redirect makes a

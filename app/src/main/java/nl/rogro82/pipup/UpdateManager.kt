@@ -63,6 +63,16 @@ object UpdateManager {
         private set
     @Volatile var lastError: String? = null
         private set
+    /// Where a running self-update is (0.23.0): "downloading" while the APK streams in,
+    /// "installing" once it is handed to the PackageInstaller. null when idle; /state reports
+    /// "awaiting_confirmation" instead while Android < 12 waits for the remote press.
+    @Volatile private var installPhase: String? = null
+    /// Bytes of the APK received so far, and its size from Content-Length (-1 = unknown).
+    @Volatile var downloadedBytes: Long = 0L
+        private set
+    @Volatile var downloadTotalBytes: Long = -1L
+        private set
+
     /// Which trust store the updater's connections use: "composite" (system + bundled
     /// ISRG Root X1), "platform-default: <why>" when building the composite failed, or
     /// "unbuilt" until the first connection forces the lazy build. Reported in /state
@@ -110,12 +120,37 @@ object UpdateManager {
     fun abandonPending() {
         pendingConfirm = null
         installStartedAt.set(0)
+        resetProgress()
     }
 
     val isInstalling: Boolean
         get() = installStartedAt.get().let {
             it != 0L && android.os.SystemClock.elapsedRealtime() - it < INSTALL_TIMEOUT_MS
         }
+
+    /// Phase reported in /state: null when no install is running.
+    val phase: String?
+        get() = when {
+            !isInstalling -> null
+            pendingConfirm != null -> "awaiting_confirmation"
+            else -> installPhase
+        }
+
+    /// Download progress 0-100 while downloading; null in every other phase, and when the
+    /// server sent no Content-Length (a percentage would then be a guess).
+    val downloadProgress: Int?
+        get() {
+            if (phase != "downloading") return null
+            val total = downloadTotalBytes
+            if (total <= 0) return null
+            return (downloadedBytes * 100 / total).toInt().coerceIn(0, 100)
+        }
+
+    private fun resetProgress() {
+        installPhase = null
+        downloadedBytes = 0L
+        downloadTotalBytes = -1L
+    }
 
     /// True when GitHub advertises a release newer than the running build.
     val updateAvailable: Boolean
@@ -285,6 +320,8 @@ object UpdateManager {
             return "an update is already running"
         }
 
+        resetProgress()
+        installPhase = "downloading"
         return try {
             val conn = openWithRedirects(url, readTimeoutMs = 60000)
             if (conn.responseCode != 200) {
@@ -292,8 +329,11 @@ object UpdateManager {
                     Log.w(LOG_TAG, it)
                     lastError = it   // 0.19.1: synchronous failures were invisible in /state
                     installStartedAt.set(0)
+                    resetProgress()
                 }
             }
+            // Header instead of contentLengthLong: that one needs API 24, minSdk is 23.
+            downloadTotalBytes = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
 
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(
@@ -311,9 +351,19 @@ object UpdateManager {
             val sessionId = installer.createSession(params)
             installer.openSession(sessionId).use { session ->
                 session.openWrite("pipup.apk", 0, -1).use { out ->
-                    conn.inputStream.use { it.copyTo(out) }
+                    // Copy by hand instead of copyTo() so /state can report progress (0.23.0).
+                    conn.inputStream.use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            out.write(buffer, 0, n)
+                            downloadedBytes += n
+                        }
+                    }
                     session.fsync(out)
                 }
+                installPhase = "installing"
                 registerResultReceiver(context)
                 session.commit(pendingIntent(context, sessionId).intentSender)
             }
@@ -322,6 +372,7 @@ object UpdateManager {
             null
         } catch (ex: Throwable) {
             installStartedAt.set(0)
+            resetProgress()
             "install failed: ${ex.message ?: ex.javaClass.simpleName}".also {
                 Log.e(LOG_TAG, it, ex)
                 lastError = it   // 0.19.1: a download/commit exception now shows in /state
@@ -372,6 +423,7 @@ object UpdateManager {
                             Log.i(LOG_TAG, "Update installed")
                             pendingConfirm = null
                             installStartedAt.set(0)
+                            resetProgress()
                         }
                         else -> {
                             val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
@@ -379,6 +431,7 @@ object UpdateManager {
                             Log.w(LOG_TAG, lastError!!)
                             pendingConfirm = null
                             installStartedAt.set(0)
+                            resetProgress()
                         }
                     }
                 }
