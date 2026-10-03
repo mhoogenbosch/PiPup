@@ -848,6 +848,12 @@ class PiPupService : Service(), WebServer.Handler {
             "available" to UpdateManager.updateAvailable,
             "latest" to UpdateManager.latestVersion,
             "installing" to UpdateManager.isInstalling,
+            // 0.23.0: downloading / installing / awaiting_confirmation, null when idle
+            "phase" to UpdateManager.phase,
+            // 0.23.0: 0-100 while downloading, null otherwise (or without Content-Length)
+            "progress" to UpdateManager.downloadProgress,
+            "downloadedBytes" to UpdateManager.downloadedBytes,
+            "totalBytes" to UpdateManager.downloadTotalBytes.takeIf { it > 0 },
             // waiting for the on-screen confirmation Android < 12 always demands
             "pendingUserAction" to UpdateManager.pendingUserAction,
             // false on Android < 12: an install cannot complete without a remote press
