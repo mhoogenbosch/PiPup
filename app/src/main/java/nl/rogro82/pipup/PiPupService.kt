@@ -86,6 +86,8 @@ class PiPupService : Service(), WebServer.Handler {
     @Volatile private var mLastPopupAt: Long = 0L
     /// ms from view creation to first rendered frame of the last video/web popup; null until known
     @Volatile private var mLastFirstFrameMs: Long? = null
+    /// last stream error of the newest popup (whep, 0.25.0): null while fine
+    @Volatile private var mLastMediaError: String? = null
     private val mPopupsShown = java.util.concurrent.atomic.AtomicLong(0)
     private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
@@ -776,6 +778,7 @@ class PiPupService : Service(), WebServer.Handler {
     private fun buildView(popup: PopupProps, key: String): PopupView {
         val view = PopupView.build(this, popup)
         view.onFirstFrame = { ms -> mLastFirstFrameMs = ms }
+        view.onMediaError = { msg -> mLastMediaError = msg }
         view.onButton = { btn ->
             // Use the props shown now, not this closure's `popup`: an update-in-place
             // reuses the view but can carry a new callback URL.
@@ -822,6 +825,7 @@ class PiPupService : Service(), WebServer.Handler {
             mLastPopup = popup
             mLastPopupAt = SystemClock.elapsedRealtime()
             mLastFirstFrameMs = null
+            mLastMediaError = null
 
             val key = keyOf(popup.id)
             val current = mShown[key]
@@ -1070,6 +1074,8 @@ class PiPupService : Service(), WebServer.Handler {
                 "buttons" to last.buttons.size,
                 // time to first rendered frame (video/web); null while not yet painted or n/a
                 "firstFrameMs" to mLastFirstFrameMs,
+                // whep (0.25.0): why the stream did not (or no longer) play; null when fine
+                "mediaError" to mLastMediaError,
                 "secondsAgo" to ((SystemClock.elapsedRealtime() - mLastPopupAt) / 1000)
             )
         }
@@ -1224,6 +1230,7 @@ class PiPupService : Service(), WebServer.Handler {
     /// Media summary for /state's lastPopup: {type, width, height?} or null.
     private fun mediaInfo(p: PopupProps): Map<String, Any?>? = when (val m = p.media) {
         is PopupProps.Media.Web -> mapOf("type" to "web", "width" to m.width, "height" to m.height, "poster" to (m.poster != null))
+        is PopupProps.Media.Whep -> mapOf("type" to "whep", "width" to m.width, "height" to m.height, "poster" to (m.poster != null))
         is PopupProps.Media.Video -> mapOf("type" to "video", "width" to m.width, "poster" to (m.poster != null), "softwareDecoder" to m.softwareDecoder)
         is PopupProps.Media.Image -> mapOf("type" to "image", "width" to m.width)
         is PopupProps.Media.Bitmap -> mapOf("type" to "bitmap", "width" to m.width)
@@ -1233,6 +1240,7 @@ class PiPupService : Service(), WebServer.Handler {
     /// Muted flag of the last popup's media; null when the media type has no audio.
     private fun mediaMuted(p: PopupProps): Boolean? = when (val m = p.media) {
         is PopupProps.Media.Web -> m.muted
+        is PopupProps.Media.Whep -> m.muted
         is PopupProps.Media.Video -> m.muted
         else -> null
     }

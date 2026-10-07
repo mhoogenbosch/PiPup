@@ -74,7 +74,8 @@ data class PopupProps(
     @JsonSubTypes(
         JsonSubTypes.Type(Media.Video::class, name = "video"),
         JsonSubTypes.Type(Media.Image::class, name = "image"),
-        JsonSubTypes.Type(Media.Web::class, name = "web")
+        JsonSubTypes.Type(Media.Web::class, name = "web"),
+        JsonSubTypes.Type(Media.Whep::class, name = "whep")
     )
     sealed class Media {
         @JsonIgnoreProperties(ignoreUnknown = true)
@@ -94,6 +95,12 @@ data class PopupProps(
         // whose html/body background is transparent shows the TV picture behind it.
         data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false,
                        val poster: String? = null, val transparent: Boolean = false): Media()
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        // whep (0.25.0): a WebRTC stream played straight from a WHEP endpoint (e.g. go2rtc's
+        // http://host:1984/api/webrtc?src=<camera>), without loading the server's player page.
+        // `poster` as for web; `transparent` lets letterbox bars show the TV behind.
+        data class Whep(val uri: String, val width: Int = 640, val height: Int = 360, val muted: Boolean = true,
+                        val poster: String? = null, val transparent: Boolean = false): Media()
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }
 
