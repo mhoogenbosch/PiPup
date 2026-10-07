@@ -183,14 +183,23 @@ rendered frame (`/state.lastPopup.firstFrameMs`):
 | Stream | WebRTC page in `web` | `whep` | Frigate MJPEG |
 |---|---|---|---|
 | `deurbel` (main, 2560×1920, 10 fps), 6 runs | 3423 ms (1977–6635) | 2343 ms (2207–2536) | 906 ms (883–934) |
-| `deurbel_noaudio` (go2rtc remux without audio), 5 runs | 6357 ms (5589–6698) | 2524 ms (2262–2772) | — |
+| `deurbel_noaudio` (go2rtc re-stream of the sub-stream), 5 runs | 6357 ms (5589–6698) | 2524 ms (2262–2772) * | — |
+| main streams after setting the camera keyframe interval to 1 s (`gop 1`), 6 runs over 4 cameras | — | **1.0–1.6 s** (avg 1.3 s) | — |
+
+\* Measured while that stream happened to be warm from the runs before. Cold, as in real use, it took
+6.4 s: go2rtc answered only after 4.2 s because it had to start the stream first.
 
 Where WHEP's time goes (its logcat timeline): offer after 73 ms, go2rtc's answer after 257 ms, video
 track after 354 ms, first frame after about 1.5 s. The rest of the wait is the **camera's keyframe**:
 WebRTC can only show a picture from the next I-frame, so a shorter I-frame interval on the camera
-starts every WebRTC route sooner. A stream go2rtc is not pulling yet adds its connect time (3.1 s for
-a cold sub-stream in the same test), so prefer a stream that is already running (e.g. the one Frigate
-records from).
+starts every WebRTC route sooner (going from a 2 s to a 1 s interval brought the main streams down to
+1.0–1.6 s).
+
+**Use a stream go2rtc is already pulling.** A stream with no other viewer is started on demand: go2rtc
+answers only once it has connected to the camera, which took 3–4 s here. The main stream Frigate
+records from is always running, so its answer comes in ~0.3 s. A separate "no audio" re-stream is not
+needed: with `muted` (the default) the app asks for video only. Check with go2rtc's `/api/streams`: a
+stream with consumers is warm.
 
 ### The poster hand-over
 
