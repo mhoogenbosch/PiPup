@@ -7,6 +7,25 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.25.0] — 2026-10-07 (WHEP: WebRTC without the player page)
+Idea from [lapicidae/PiPup](https://github.com/lapicidae/PiPup); implemented independently.
+### Added
+- **`whep` media**: a WebRTC stream played straight from a WHEP endpoint (go2rtc
+  `/api/webrtc?src=<stream>`). A built-in player page, loaded with the endpoint's origin as base URL
+  (same-origin POST, no CORS), sends one recvonly SDP offer and plays the answer; "playing" comes from
+  its own `<video>`, so the poster hands over exactly on the first frame. Fields `uri`, `width`,
+  `height`, `muted` (default `true`: no audio track requested), `poster`, `transparent`. Retries with
+  backoff (1, 2, 4, then every 8 s) on a failed offer or a dropped connection. The endpoint URL is
+  inserted as a JSON string literal, never spliced raw into the script.
+- `/state.lastPopup.mediaError`: the last stream error of the newest popup (whep), null while fine.
+- WHEP timeline in logcat (`PopupView`): offer, gathering, answer, ICE, track, playing, in ms.
+### Measured
+- Fire TV AFTKA (Android 9), doorbell main stream, 6 alternating runs: go2rtc `stream.html` average
+  3423 ms (1977–6635), **whep 2343 ms (2207–2536)**, Frigate MJPEG 906 ms. WHEP itself is done after
+  ~350 ms; the rest is the camera's keyframe interval.
+### Changed
+- `MIN_HA_PIPUP` raised to 1.23.0 (`whep_url`).
+
 ## [v0.24.0] — 2026-10-07 (several popups at once, push, see-through popups)
 Built by [David Bebawy (@davbebawy)](https://github.com/davbebawy) in his fork and adopted here with
 his commits and authorship intact.

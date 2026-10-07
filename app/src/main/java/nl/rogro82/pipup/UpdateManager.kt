@@ -49,11 +49,11 @@ object UpdateManager {
     fun isValidSource(value: String): Boolean =
         GITHUB_SOURCE.matches(value) || value.startsWith("http://") || value.startsWith("https://")
 
-    /// Oldest ha-pipup release that can drive EVERY field this app accepts (0.24.0 adds
-    /// `opacity`, `transparent`, `bringToFront` and push, handled from ha-pipup 1.22.0). Bump ONLY when a new app
+    /// Oldest ha-pipup release that can drive EVERY field this app accepts (0.25.0 adds
+    /// the `whep` media type, sent as `whep_url` from ha-pipup 1.23.0). Bump ONLY when a new app
     /// release adds request fields the integration must know about — part of the release
     /// checklist, not something that tracks GitHub.
-    const val MIN_HA_PIPUP = "1.22.0"
+    const val MIN_HA_PIPUP = "1.23.0"
     private const val INSTALL_ACTION = "nl.rogro82.pipup.INSTALL_RESULT"
     private const val NET_TIMEOUT_MS = 15000
     private const val MAX_REDIRECTS = 5

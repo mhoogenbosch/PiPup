@@ -16,6 +16,9 @@ streams) on your TV from your home-automation system, for **as long as you want*
 
 ## What this fork adds (compared to [rogro82/PiPup](https://github.com/rogro82/PiPup))
 
+- **WHEP streams** (since 0.25.0) — `media.whep` plays a WebRTC stream straight from a WHEP endpoint
+  (go2rtc `/api/webrtc?src=…`), about a second faster and far steadier than go2rtc's player page.
+  See [Which stream should a camera popup use?](#which-stream-should-a-camera-popup-use).
 - **Several popups at once** (since 0.24.0) — each popup `id` is its own window, so a doorbell camera
   and a waste reminder can stand side by side. `/state.popups` lists them in stack order,
   `/cancel?all=true` clears the screen. See [Cancelling a popup](#cancelling-a-popup).
@@ -152,6 +155,7 @@ sources — the trade-off is **start-up time versus how far the picture lags beh
 
 | Route | Start-up (cold) | Live lag | Notes |
 |---|---|---|---|
+| **WHEP** (`whep` → go2rtc `/api/webrtc?src=<cam>`, since 0.25.0) | 2.2–2.5 s | **< 0.5 s** | Same WebRTC stream as below without go2rtc's page. **Best choice since 0.25.0.** |
 | **WebRTC** (`web_url` → go2rtc `stream.html?src=<cam>&mode=webrtc`) | 3–7 s (up to ~11 s on slow webviews) | **< 0.5 s** | Full frame rate. **Best choice since 0.20.0** — see below. |
 | **RTSP** (`video_url: rtsp://…`) | 4–6 s | ~1 s | ExoPlayer, RTP over TCP; renders over playing video. |
 | **MJPEG** (`web_url` → Frigate `/api/<cam>?fps=5`) | 0.2–0.5 s | 2–3 s | The lag is inherent: camera GOP + Frigate's detect pipeline + the frame sampling. Choppy (detect fps). |
@@ -173,8 +177,31 @@ it); only a page where no video is ever found falls back to showing the page aft
 }}}
 ```
 
-**Recommendation: WebRTC + poster** for anything where "now" matters (doorbell, motion). MJPEG remains
+**Recommendation: WHEP + poster** for anything where "now" matters (doorbell, motion). MJPEG remains
 a fine zero-dependency fallback when go2rtc is not available; RTSP sits in between and needs no web page.
+
+Measured on a Fire TV (AFTKA, Android 9) with 0.25.0, six alternating runs per route on the same
+camera (main stream 2560×1920, 10 fps), time from the popup request to the first rendered frame:
+
+| Route | Average | Range |
+|---|---|---|
+| go2rtc `stream.html` in `web` | 3423 ms | 1977–6635 ms |
+| `whep` | 2343 ms | 2207–2536 ms |
+| Frigate MJPEG in `web` (5 fps) | 906 ms | 883–934 ms |
+
+Where WHEP's time goes (from its timeline): offer after 73 ms, go2rtc's answer after 257 ms, video
+track after 354 ms, first frame after about 1.5 s. The rest of the wait is the **camera's keyframe**:
+WebRTC can only show a picture from the next I-frame, so a shorter I-frame interval on the camera
+starts every WebRTC route sooner. A stream go2rtc is not yet pulling adds its connect time (3.1 s
+for a cold sub-stream in the same test).
+
+```json
+{ "id": "doorbell", "duration": 0, "media": { "whep": {
+  "uri": "http://go2rtc:1984/api/webrtc?src=doorbell",
+  "width": 720, "height": 540,
+  "poster": "http://frigate:5000/api/doorbell/latest.jpg"
+}}}
+```
 
 ## Supported devices
 
@@ -414,15 +441,26 @@ Example:
 }
 ```
 
-All fields are optional. For `media` you can specify 3 types:
+All fields are optional. For `media` you can specify 4 types:
 
 ```json 
 { "image": { "uri": "address_to_your_image", "width": 480 }}
 { "video": { "uri": "address_to_your_video", "width": 480, "muted": true }}
 { "web":   { "uri": "address_to_your_resource", "width": 640, "height": 480, "muted": true }}
+{ "whep":  { "uri": "http://go2rtc:1984/api/webrtc?src=doorbell", "width": 640, "height": 480 }}
 ```
 
-`poster` (since 0.17.0, video and web): URL of a still image shown over the stream area until the
+`whep` (since 0.25.0): a WebRTC stream played straight from a
+[WHEP](https://datatracker.ietf.org/doc/draft-ietf-wish-whep/) (IETF draft) endpoint, such as go2rtc's `/api/webrtc?src=<stream>`.
+The app loads a small player page of its own (with the endpoint's origin as base, so no CORS setup is
+needed), sends one SDP offer, and plays the answer. Compared with go2rtc's `stream.html` in a `web`
+popup this skips the page download, its player script and the websocket signalling. `muted` defaults
+to `true` (no audio track is requested); `poster` and `transparent` work as for `web`. On a failed
+offer or a dropped connection it retries with backoff (1, 2, 4, then every 8 s).
+`/state.lastPopup.mediaError` holds the last error (for example `HTTP 404` for an unknown stream
+name); with adb, `logcat -s PopupView` shows a timeline per attempt (offer, answer, track, playing).
+
+`poster` (since 0.17.0, video and web; whep since 0.25.0): URL of a still image shown over the stream area until the
 stream renders its first frame, then faded out. Use a camera snapshot (e.g. Frigate
 `/api/<cam>/latest.jpg`) so the popup shows a picture instantly instead of an empty frame while
 RTSP connects or the WebView starts. The stream area takes the poster's aspect, so still and live

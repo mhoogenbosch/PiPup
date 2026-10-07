@@ -49,6 +49,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     /// view's creation and the first rendered frame of its stream (video/web). Reported in
     /// /state.lastPopup.firstFrameMs so the start-up cost of a live popup is measurable.
     var onFirstFrame: ((Long) -> Unit)? = null
+    /// set by the service after build(); invoked with a short reason when the stream fails
+    /// (whep). Reported in /state.lastPopup.mediaError.
+    var onMediaError: ((String) -> Unit)? = null
     private val mCreatedAt = android.os.SystemClock.elapsedRealtime()
     private var mFirstFrameReported = false
 
@@ -652,8 +655,171 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         }
     }
 
+
+    /// WebRTC via WHEP (0.25.0): a small page of our own, loaded with the stream's origin as
+    /// base URL (so the SDP POST is same-origin: no CORS), negotiates one recvonly
+    /// RTCPeerConnection with the endpoint and plays it in a <video>. Compared with loading
+    /// go2rtc's stream.html this skips the page download, its player bundle and the
+    /// websocket signalling: one HTTP round trip, and "playing" comes from our own element
+    /// instead of a watcher that has to find a <video> in someone else's shadow DOM.
+    private class Whep(context: Context, popup: PopupProps, val media: PopupProps.Media.Whep): PopupView(context, popup) {
+        private var mWebView: WebView? = null
+
+        init { create() }
+
+        @SuppressLint("SetJavaScriptEnabled")
+        override fun create() {
+            super.create()
+
+            val frame = findViewById<FrameLayout>(R.id.popup_frame)
+            val webView = WebView(context).apply {
+                with(settings) {
+                    javaScriptEnabled = true
+                    mediaPlaybackRequiresUserGesture = false
+                    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                }
+                // The page reports through document.title, like the web watcher.
+                webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
+                        msg?.message()?.let { if (it.startsWith("whep")) Log.i(LOG_TAG, it) }
+                        return true
+                    }
+                    override fun onReceivedTitle(view: WebView?, title: String?) {
+                        if (title == null || !title.startsWith("pipup:")) return
+                        when {
+                            title == "pipup:playing" -> onStreamFirstFrame()
+                            title.startsWith("pipup:error:") -> {
+                                val msg = title.removePrefix("pipup:error:")
+                                Log.w(LOG_TAG, "whep: $msg")
+                                try { onMediaError?.invoke(msg) } catch (_: Throwable) {}
+                            }
+                        }
+                    }
+                }
+                setBackgroundColor(if (media.transparent) Color.TRANSPARENT else Color.BLACK)
+                val origin = try {
+                    val u = android.net.Uri.parse(media.uri)
+                    "${u.scheme}://${u.encodedAuthority}/"
+                } catch (_: Throwable) { null }
+                loadDataWithBaseURL(origin, whepPage(media), "text/html", "utf-8", null)
+            }
+            mWebView = webView
+
+            frame.addView(webView, FrameLayout.LayoutParams(media.width, media.height).apply {
+                gravity = Gravity.CENTER
+            })
+            attachPoster(frame, media.poster,
+                FrameLayout.LayoutParams(media.width, media.height).apply { gravity = Gravity.CENTER }
+            ) { pw, ph ->
+                // the camera's aspect, from its snapshot: video and still line up exactly
+                val h = (media.width.toLong() * ph / pw).toInt()
+                webView.layoutParams = FrameLayout.LayoutParams(media.width, h).apply { gravity = Gravity.CENTER }
+                mPoster?.layoutParams = FrameLayout.LayoutParams(media.width, h).apply { gravity = Gravity.CENTER }
+            }
+        }
+
+        override fun destroy() {
+            super.destroy()
+            destroyPoster()
+            try {
+                mWebView?.apply {
+                    // closes the peer connection, so go2rtc drops the consumer at once
+                    evaluateJavascript("window.__pipupStop && window.__pipupStop()", null)
+                    loadUrl("about:blank")
+                    destroy()
+                }
+                mWebView = null
+            } catch (_: Throwable) {}
+        }
+    }
+
     companion object {
         const val LOG_TAG = "PopupView"
+
+        /// The WHEP player page. The endpoint URL goes in as a JSON string literal
+        /// (JSONObject.quote), never spliced raw into the script.
+        fun whepPage(media: PopupProps.Media.Whep): String =
+            WHEP_PAGE
+                .replace("__URL__", org.json.JSONObject.quote(media.uri))
+                .replace("__MUTED__", if (media.muted) "true" else "false")
+                .replace("__BG__", if (media.transparent) "transparent" else "#000")
+
+        /// Recvonly WebRTC against a WHEP endpoint. No STUN: on the LAN the endpoint's host
+        /// candidates are enough, and gathering waits at most 1 s anyway. Retries with backoff
+        /// (1, 2, 4, then every 8 s) on a failed POST or a connection that drops, so a camera
+        /// that is still waking up, or a go2rtc restart, heals by itself.
+        const val WHEP_PAGE = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:__BG__}
+video{width:100%;height:100%;object-fit:contain;background:__BG__}</style></head>
+<body><video id="v" autoplay playsinline></video><script>
+(function(){
+  var URL_ = __URL__, MUTED = __MUTED__;
+  var v = document.getElementById('v'); v.muted = MUTED;
+  var pc = null, stopped = false, attempt = 0, playing = false, timer = null;
+  var T0 = Date.now(); function lg(m){ console.log('whep +' + (Date.now() - T0) + 'ms ' + m); }
+  function title(t){ document.title = 'pipup:' + t; }
+  function err(m){ title('error:' + String(m).slice(0, 120)); }
+  function retry(){
+    if (stopped || timer) return;
+    var wait = Math.min(8000, 1000 * Math.pow(2, attempt++));
+    timer = setTimeout(function(){ timer = null; connect(); }, wait);
+  }
+  function close(){ try { if (pc) pc.close(); } catch(e) {} pc = null; }
+  window.__pipupStop = function(){ stopped = true; if (timer) clearTimeout(timer); close(); };
+  v.addEventListener('playing', function(){ if (!playing){ playing = true; attempt = 0; title('playing'); } });
+  function gathered(p){
+    return new Promise(function(res){
+      if (p.iceGatheringState === 'complete') return res();
+      var t = setTimeout(res, 1000);
+      p.addEventListener('icegatheringstatechange', function(){
+        if (p.iceGatheringState === 'complete'){ clearTimeout(t); res(); }
+      });
+    });
+  }
+  function connect(){
+    if (stopped) return;
+    if (!window.RTCPeerConnection){ err('no WebRTC in this WebView'); return; }
+    close();
+    var p = pc = new RTCPeerConnection({ iceServers: [] });
+    p.addTransceiver('video', { direction: 'recvonly' });
+    if (!MUTED) p.addTransceiver('audio', { direction: 'recvonly' });
+    p.ontrack = function(e){
+      lg('track ' + e.track.kind);
+      if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0] || new MediaStream([e.track]);
+      var pr = v.play(); if (pr && pr.catch) pr.catch(function(){});
+    };
+    p.onconnectionstatechange = function(){
+      if (p !== pc) return;
+      var s = p.connectionState;
+      if (s === 'failed' || s === 'closed' || s === 'disconnected'){
+        err('connection ' + s); playing = false; retry();
+      }
+    };
+    lg('connect');
+    p.oniceconnectionstatechange = function(){ lg('ice ' + p.iceConnectionState); };
+    v.addEventListener('loadedmetadata', function(){ lg('loadedmetadata'); });
+    v.addEventListener('playing', function(){ lg('playing'); });
+    p.createOffer().then(function(o){ lg('offer'); return p.setLocalDescription(o); })
+      .then(function(){ return gathered(p); })
+      .then(function(){ lg('gathered ' + p.iceGatheringState); })
+      .then(function(){
+        return fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'application/sdp' },
+                             body: p.localDescription.sdp });
+      })
+      .then(function(r){
+        lg('answer HTTP ' + r.status);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function(sdp){
+        if (p !== pc) return;
+        return p.setRemoteDescription({ type: 'answer', sdp: sdp });
+      })
+      .catch(function(e){ if (p === pc){ err(e && e.message ? e.message : e); retry(); } });
+  }
+  connect();
+})();
+</script></body></html>"""
 
         /// Bright fill shown on the focused popup button. White text stays readable on it.
         val DEFAULT_BUTTON_FOCUS_COLOR = Color.parseColor("#2979FF")
@@ -756,6 +922,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         {
             return when (popup.media) {
                 is PopupProps.Media.Web -> Web(context, popup, popup.media)
+                is PopupProps.Media.Whep -> Whep(context, popup, popup.media)
                 is PopupProps.Media.Video -> Video(context, popup, popup.media)
                 is PopupProps.Media.Image -> Image(context, popup, popup.media)
                 is PopupProps.Media.Bitmap -> Bitmap(context, popup, popup.media)
