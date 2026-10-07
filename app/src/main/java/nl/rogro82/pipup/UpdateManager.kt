@@ -39,9 +39,9 @@ object UpdateManager {
     /// as is, e.g. a LAN mirror kept by Home Assistant) and takes the first release
     /// that is neither draft nor prerelease. Its APK is `<folder>/<asset name>`, so a
     /// TV with no internet can still update.
-    const val DEFAULT_SOURCE = "github:davbebawy/PiPup"
+    const val DEFAULT_SOURCE = "github:mhoogenbosch/PiPup"
     private const val HA_PIPUP_RELEASES_URL =
-        "https://api.github.com/repos/davbebawy/ha-pipup/releases/latest"
+        "https://api.github.com/repos/mhoogenbosch/ha-pipup/releases/latest"
     @Volatile var source: String = DEFAULT_SOURCE
 
     private val GITHUB_SOURCE = Regex("^github:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
