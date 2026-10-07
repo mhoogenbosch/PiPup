@@ -150,50 +150,8 @@ a popup binary sensor and `pipup.show` / `pipup.dismiss` actions (including came
 
 ## Which stream should a camera popup use?
 
-Measured across a mixed fleet (Fire TV, Nokia 8010, TCL Google TV) with go2rtc + Frigate as the
-sources — the trade-off is **start-up time versus how far the picture lags behind reality**:
-
-| Route | Start-up (cold) | Live lag | Notes |
-|---|---|---|---|
-| **WHEP** (`whep` → go2rtc `/api/webrtc?src=<cam>`, since 0.25.0) | 2.2–2.5 s | **< 0.5 s** | Same WebRTC stream as below without go2rtc's page. **Best choice since 0.25.0.** |
-| **WebRTC** (`web_url` → go2rtc `stream.html?src=<cam>&mode=webrtc`) | 3–7 s (up to ~11 s on slow webviews) | **< 0.5 s** | Full frame rate. **Best choice since 0.20.0** — see below. |
-| **RTSP** (`video_url: rtsp://…`) | 4–6 s | ~1 s | ExoPlayer, RTP over TCP; renders over playing video. |
-| **MJPEG** (`web_url` → Frigate `/api/<cam>?fps=5`) | 0.2–0.5 s | 2–3 s | The lag is inherent: camera GOP + Frigate's detect pipeline + the frame sampling. Choppy (detect fps). |
-| **HLS** (`video_url: …m3u8`, `camera_mode: stream`) | 7–12 s | 5–10 s | Avoid for live viewing; fine for non-urgent clips. |
-
-The start-up column stopped mattering with the **poster** (0.17.0): a still of the same camera shows
-instantly and hands over to the stream. What *does* matter is the hand-over moment — and since
-**0.20.0** the poster on a `web_url` popup fades when the page's video **actually plays** (not when
-the page paints), so the slow WebRTC start-up is fully masked while its sub-second live lag is kept.
-Since **0.20.1** that holds with no time limit once the page is seen to contain a `<video>` element
-(measured hand-over: 6.4 s on a Nokia 8010, 10.5 s on a slow TCL webview — the poster covered all of
-it); only a page where no video is ever found falls back to showing the page after 20 s:
-
-```json
-{ "id": "doorbell", "duration": 0, "media": { "web": {
-  "uri": "http://go2rtc:1984/stream.html?src=doorbell&mode=webrtc",
-  "width": 720, "height": 540, "muted": true,
-  "poster": "http://frigate:5000/api/doorbell/latest.jpg"
-}}}
-```
-
-**Recommendation: WHEP + poster** for anything where "now" matters (doorbell, motion). MJPEG remains
-a fine zero-dependency fallback when go2rtc is not available; RTSP sits in between and needs no web page.
-
-Measured on a Fire TV (AFTKA, Android 9) with 0.25.0, six alternating runs per route on the same
-camera (main stream 2560×1920, 10 fps), time from the popup request to the first rendered frame:
-
-| Route | Average | Range |
-|---|---|---|
-| go2rtc `stream.html` in `web` | 3423 ms | 1977–6635 ms |
-| `whep` | 2343 ms | 2207–2536 ms |
-| Frigate MJPEG in `web` (5 fps) | 906 ms | 883–934 ms |
-
-Where WHEP's time goes (from its timeline): offer after 73 ms, go2rtc's answer after 257 ms, video
-track after 354 ms, first frame after about 1.5 s. The rest of the wait is the **camera's keyframe**:
-WebRTC can only show a picture from the next I-frame, so a shorter I-frame interval on the camera
-starts every WebRTC route sooner. A stream go2rtc is not yet pulling adds its connect time (3.1 s
-for a cold sub-stream in the same test).
+**Short answer: `whep` + `poster`** for anything where "now" matters (doorbell, motion), when you run
+go2rtc (stand-alone or inside Frigate):
 
 ```json
 { "id": "doorbell", "duration": 0, "media": { "whep": {
@@ -202,6 +160,46 @@ for a cold sub-stream in the same test).
   "poster": "http://frigate:5000/api/doorbell/latest.jpg"
 }}}
 ```
+
+The poster (a camera snapshot) is on screen at once; the live WebRTC picture takes over on its first
+frame, at full frame rate and well under a second behind reality. Without go2rtc, MJPEG is a fine
+zero-dependency fallback; RTSP sits in between and needs no web page.
+
+The trade-off between the routes is **start-up time versus how far the picture lags behind reality**:
+
+| Route | First live frame | Live lag | Notes |
+|---|---|---|---|
+| **WHEP** (`whep` → go2rtc `/api/webrtc?src=<cam>`, since 0.25.0) | 2.2–2.8 s | **< 0.5 s** | **Recommended.** WebRTC without go2rtc's player page. |
+| WebRTC page (`web` → go2rtc `stream.html?src=<cam>&mode=webrtc`) | 2–7 s (up to ~11 s on slow webviews) | < 0.5 s | Same stream as WHEP, but the page, its player script and websocket signalling come first. Use only on an app older than 0.25.0. |
+| RTSP (`video` → `rtsp://…`) | 4–6 s | ~1 s | ExoPlayer, RTP over TCP; renders over playing video. |
+| MJPEG (`web` → Frigate `/api/<cam>?fps=5`) | 0.2–0.9 s | 2–3 s | Fastest start, but choppy (detect fps) and behind: camera GOP + Frigate's detect pipeline + frame sampling. |
+| HLS (`video` → `…m3u8`, `camera_mode: stream`) | 7–12 s | 5–10 s | Avoid for live viewing; fine for non-urgent clips. |
+
+### Measurements
+
+Fire TV (AFTKA, Android 9), app 0.25.0, alternating runs, time from the popup request to the first
+rendered frame (`/state.lastPopup.firstFrameMs`):
+
+| Stream | WebRTC page in `web` | `whep` | Frigate MJPEG |
+|---|---|---|---|
+| `deurbel` (main, 2560×1920, 10 fps), 6 runs | 3423 ms (1977–6635) | 2343 ms (2207–2536) | 906 ms (883–934) |
+| `deurbel_noaudio` (go2rtc remux without audio), 5 runs | 6357 ms (5589–6698) | 2524 ms (2262–2772) | — |
+
+Where WHEP's time goes (its logcat timeline): offer after 73 ms, go2rtc's answer after 257 ms, video
+track after 354 ms, first frame after about 1.5 s. The rest of the wait is the **camera's keyframe**:
+WebRTC can only show a picture from the next I-frame, so a shorter I-frame interval on the camera
+starts every WebRTC route sooner. A stream go2rtc is not pulling yet adds its connect time (3.1 s for
+a cold sub-stream in the same test), so prefer a stream that is already running (e.g. the one Frigate
+records from).
+
+### The poster hand-over
+
+The poster (since 0.17.0) makes start-up time matter much less: a still of the same camera shows
+instantly and fades on the stream's first frame. For `whep` that moment comes from the app's own
+`<video>` element. For a `web` page the app injects a watcher: since 0.20.0 the poster waits until
+the page's video **actually plays** (not when the page paints), and since 0.20.1 there is no time limit
+once the page is seen to contain a `<video>`. Only a page where no video is ever found falls back to
+showing the page after 20 s.
 
 ## Supported devices
 
