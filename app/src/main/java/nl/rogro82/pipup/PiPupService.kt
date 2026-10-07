@@ -69,7 +69,7 @@ class PiPupService : Service(), WebServer.Handler {
             Log.d(LOG_TAG, "screensaver ${if (mDreaming) "started" else "stopped"}")
         }
     }
-    /// Screen on/off pushes (0.23.0): a controller learns of standby without polling.
+    /// Screen on/off pushes (0.24.0): a controller learns of standby without polling.
     private val mScreenReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -531,7 +531,7 @@ class PiPupService : Service(), WebServer.Handler {
     private fun startUpdateChecker() {
         mWatchdogHandler.postDelayed(object : Runnable {
             override fun run() {
-                // LAN-only TVs (no route to GitHub) switch this off via /settings (0.22.0).
+                // LAN-only TVs (no route to GitHub) switch this off via /settings (0.24.0).
                 if (updateChecksEnabled()) Thread {
                     if (UpdateManager.check() && UpdateManager.updateAvailable) {
                         maybeAnnounceUpdate()
@@ -554,9 +554,9 @@ class PiPupService : Service(), WebServer.Handler {
 
     /// GET/POST /settings: persistent device settings, POSTed as query parameters,
     /// e.g. `POST /settings?updateChecks=false`; both methods answer the current values.
-    /// `updateChecks` (0.22.0, true/false): the twice-daily release check.
-    /// `webhook` (0.23.0): URL that receives every state change (see [Pusher]).
-    /// `updateSource` (0.23.0): where releases come from (see [UpdateManager.source]).
+    /// `updateChecks` (0.24.0, true/false): the twice-daily release check.
+    /// `webhook` (0.24.0): URL that receives every state change (see [Pusher]).
+    /// `updateSource` (0.24.0): where releases come from (see [UpdateManager.source]).
     private fun settingsResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
         if (session.method == NanoHTTPD.Method.POST) {
             session.parameters["updateChecks"]?.firstOrNull()?.let { v ->
@@ -567,14 +567,14 @@ class PiPupService : Service(), WebServer.Handler {
                 }
                 prefs().edit().putBoolean(PREF_UPDATE_CHECKS, on).apply()
             }
-            // webhook (0.23.0): http(s) URL to push state changes to; empty = push off
+            // webhook (0.24.0): http(s) URL to push state changes to; empty = push off
             session.parameters["webhook"]?.firstOrNull()?.let { v ->
                 if (v.isNotEmpty() && !(v.startsWith("http://") || v.startsWith("https://"))) {
                     return InvalidRequest("webhook must be an http(s) URL or empty")
                 }
                 prefs().edit().putString(PREF_WEBHOOK, v.ifEmpty { null }).apply()
             }
-            // updateSource (0.23.0): github:<owner>/<repo>, or an http(s) folder URL
+            // updateSource (0.24.0): github:<owner>/<repo>, or an http(s) folder URL
             // holding releases.json and the APKs; empty = back to the default
             session.parameters["updateSource"]?.firstOrNull()?.let { v ->
                 if (v.isNotEmpty() && !UpdateManager.isValidSource(v)) {
@@ -953,7 +953,7 @@ class PiPupService : Service(), WebServer.Handler {
         Json.writeValueAsString(buildState())
     )
 
-    /// Push one event (0.23.0): the /state JSON plus `event` and [extra]. Built here,
+    /// Push one event (0.24.0): the /state JSON plus `event` and [extra]. Built here,
     /// on the caller's thread, so the body is the state at the moment of the event.
     private fun emit(event: String, extra: Map<String, Any?> = emptyMap()) {
         if (Pusher.url.isNullOrBlank()) return

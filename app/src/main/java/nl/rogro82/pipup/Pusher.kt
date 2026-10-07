@@ -5,7 +5,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
-/// Push of state changes to a controller (0.23.0).
+/// Push of state changes to a controller (0.24.0).
 ///
 /// A controller (the Home Assistant integration) sets a webhook URL through
 /// `POST /settings?webhook=...`; from then on every state change is POSTed there as

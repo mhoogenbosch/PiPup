@@ -293,7 +293,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     /// Entrance animation (0.19.0). Runs once per *build*: an update-in-place reuses
     /// the view and never comes back here, so a re-notified popup does not keep
     /// sliding in. Unknown names fall back to appearing instantly.
-    /// Resting alpha of the popup: `opacity` (0.22.0), else fully opaque.
+    /// Resting alpha of the popup: `opacity` (0.24.0), else fully opaque.
     private val targetAlpha: Float get() = (popup.opacity ?: 1f).coerceIn(0f, 1f)
 
     fun animateIn() {

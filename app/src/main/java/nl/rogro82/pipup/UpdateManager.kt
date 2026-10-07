@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong
 /// versions always show the system's install confirmation on the TV.
 object UpdateManager {
     private const val LOG_TAG = "PiPupUpdate"
-    /// Where releases come from (0.23.0), set by the service from prefs:
+    /// Where releases come from (0.24.0), set by the service from prefs:
     /// `github:<owner>/<repo>` reads that repo's latest release; an `http(s)://`
     /// folder URL reads `<folder>/releases.json` (GitHub's releases API answer saved
     /// as is, e.g. a LAN mirror kept by Home Assistant) and takes the first release
@@ -49,11 +49,11 @@ object UpdateManager {
     fun isValidSource(value: String): Boolean =
         GITHUB_SOURCE.matches(value) || value.startsWith("http://") || value.startsWith("https://")
 
-    /// Oldest ha-pipup release that can drive EVERY field this app accepts (0.21.0 needs
-    /// the `padding` service field, added in ha-pipup 1.17.1). Bump ONLY when a new app
+    /// Oldest ha-pipup release that can drive EVERY field this app accepts (0.24.0 adds
+    /// `opacity`, `transparent`, `bringToFront` and push, handled from ha-pipup 1.22.0). Bump ONLY when a new app
     /// release adds request fields the integration must know about — part of the release
     /// checklist, not something that tracks GitHub.
-    const val MIN_HA_PIPUP = "1.17.1"
+    const val MIN_HA_PIPUP = "1.22.0"
     private const val INSTALL_ACTION = "nl.rogro82.pipup.INSTALL_RESULT"
     private const val NET_TIMEOUT_MS = 15000
     private const val MAX_REDIRECTS = 5
