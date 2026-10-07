@@ -7,11 +7,25 @@ streams) on your TV from your home-automation system, for **as long as you want*
 > This repository is a maintained fork of that project — all credit for the original idea and
 > implementation goes to him. The fork modernizes the build (AndroidX, AGP 8, Kotlin 2, targetSdk 34)
 > and adds the features below, aimed at Home Assistant use.
+>
+> Contributors to this fork: [David Bebawy (davbebawy)](https://github.com/davbebawy) built several
+> popups at once, push to a webhook, see-through popups and the configurable update source (0.24.0);
+> [andrewm1205](https://github.com/andrewm1205) added the top/bottom center positions (0.22.0).
 
 ![](graphics/screenshot-1.png)
 
 ## What this fork adds (compared to [rogro82/PiPup](https://github.com/rogro82/PiPup))
 
+- **Several popups at once** (since 0.24.0) — each popup `id` is its own window, so a doorbell camera
+  and a waste reminder can stand side by side. `/state.popups` lists them in stack order,
+  `/cancel?all=true` clears the screen. See [Cancelling a popup](#cancelling-a-popup).
+- **Push instead of poll** (since 0.24.0) — `POST /settings?webhook=<url>` makes the app POST its
+  `/state` plus an `event` (`popup_shown`, `popup_removed`, `screen_off`, …) on every change, so a
+  controller knows within milliseconds instead of at its next poll. See [Settings](#settings).
+- **See-through popups** (since 0.24.0) — `opacity` (0..1) on any popup, and `transparent: true` on
+  web media so a page with a transparent body floats over live TV.
+- **Update source and switch** (since 0.24.0) — the release check can be switched off for TVs without
+  internet, or pointed at another GitHub repo or a LAN folder with `releases.json`.
 - **Indefinite popups** — `duration: 0` (or negative) shows a popup until it is cancelled or replaced,
   e.g. show a camera stream for exactly as long as there is motion.
 - **Popup `id` + update-in-place** — re-sending a notify with the same `id` and content only reschedules
@@ -362,6 +376,9 @@ trust boundary the network itself.
   grant the screen-off route (device admin / accessibility) on a TV you deliberately expose. Granting
   nothing leaves `/power?state=off` returning 501, and the device admin only asks for `force-lock` —
   no password, camera or wipe policies — so the worst an attacker gains is a TV that goes to standby.
+- Since 0.24.0 `/settings` is on the same port. Anyone on the LAN can point the push webhook at
+  their own host (and so read every later state change) or change the update source. The update
+  source cannot install a foreign app: Android only accepts an update signed with PiPup's own key.
 
 ## Integrating
 
@@ -444,6 +461,19 @@ path, which on some Fire TVs briefly renegotiates HDMI audio.
 { "id": "doorbell", "title": "Front door", "sound": "default", "soundVolume": 0.8 }
 ```
 
+`opacity` (since 0.24.0, 0..1, default 1): draws the whole popup, media included, at that alpha, so the
+picture behind it stays visible. Works with every media type and with `animation`.
+
+`transparent` (since 0.24.0, `web` media only, default `false`): the WebView paints no background, so a
+page with a transparent `html, body { background: transparent }` shows the TV through it. Combine with
+`"backgroundColor": "#00000000"` and `"padding": 0` for a frameless, see-through overlay:
+
+```json
+{ "id": "score", "duration": 0, "padding": 0, "backgroundColor": "#00000000",
+  "media": { "web": { "uri": "http://192.168.1.96:8123/local/score.html",
+    "width": 420, "height": 900, "transparent": true } } }
+```
+
 `padding` (since 0.19.1, px, default 20): the popup's outer margin around content; `0` gives a
 near-borderless look.
 
@@ -524,9 +554,15 @@ next to the icon, and the `media` image (if any) stays below.
 
 - `duration`: seconds to show the popup. **`0` or negative shows it indefinitely**, until `/cancel`
   is called or a new popup replaces it.
-- `id` (string, optional): identifies the popup. Re-sending a notify with the same `id` and identical
-  content only reschedules the removal timer — the view (and a playing video/web stream) is kept as-is.
-  Different content (or no `id`) rebuilds the popup as before.
+- `id` (string, optional): identifies the popup. Since 0.24.0 **each id is its own popup**: a popup
+  with a new id opens beside the ones already on screen (newest on top), each in its own window sized
+  to its content. Popups without an `id` share one slot and replace each other. There is no limit on
+  how many are up; what a TV can draw smoothly depends on the TV (one video at a time is typical for
+  a 1-2 GB TV). Re-sending the same `id` with identical content only reschedules the removal timer;
+  the view (and a playing video/web stream) is kept as-is. Same `id` with new content redraws that
+  popup in place, keeping its place in the stack.
+- `bringToFront` (since 0.24.0, default `false`): a redraw of a popup already on screen opens it on
+  top of the others instead of in its old place.
 
 #### multipart/form-data (uploaded image file)
 
@@ -563,7 +599,7 @@ Form-fields:
 | iconWidth       | Integer pixels (default=96, since 0.13.0)    |
 | showProgress    | Boolean (default=false, since 0.7.0)         |
 
-`position` is an enum ranging from 0 to 4:
+`position` is an enum ranging from 0 to 6:
 
 |  | Position    |
 | -----: | ----------- |
@@ -572,6 +608,8 @@ Form-fields:
 | 2     | BottomRight |
 | 3     | BottomLeft  |
 | 4     | Center      |
+| 5     | TopCenter (since 0.22.0) |
+| 6     | BottomCenter (since 0.22.0) |
 
 Color-properties are in `[AA]RRGGBB` where the alpha channel is optional, e.g. #FFFFFF or #CCFFFFFF.
 
@@ -582,10 +620,13 @@ Color-properties are in `[AA]RRGGBB` where the alpha channel is optional, e.g. #
 | Path:         | /cancel          |
 | Method:       | POST             |
 
-Removes the currently visible popup (if any). Optionally pass `?id=<popup id>` to only cancel when
-the visible popup has that id — e.g. `POST /cancel?id=doorbell`. If the visible popup has a different
-id the call is a no-op (HTTP 200 with an explanatory message), so a delayed "hide camera" automation
-cannot accidentally cancel a newer, unrelated popup.
+Since 0.24.0 several popups can be up at once:
+
+- `POST /cancel?id=doorbell` removes the popup with that id and leaves the others.
+- `POST /cancel` (no id) removes the popup that was sent without an id.
+- `POST /cancel?all=true` removes every popup.
+
+When nothing matches, the call is a no-op (HTTP 200 with an explanatory message).
 
 ### Screen on/off
 
@@ -768,6 +809,35 @@ administration at all (`hasSystemFeature(FEATURE_DEVICE_ADMIN)` is false) — a 
 "not granted", and worth distinguishing because `dpm set-active-admin` reports `Success` there
 anyway.
 
+### Settings
+
+| Property      | Value                               |
+| ------------- | ----------------------------------- |
+| Path:         | /settings[?updateChecks=true\|false] |
+| Method:       | GET or POST                         |
+
+Since 0.24.0. Persistent device settings, kept across restarts and updates. `updateChecks` (default
+`true`) switches the twice-daily GitHub release check on or off: a TV kept off the internet on purpose
+then makes no outbound calls. Both methods answer the current values, e.g. `{"updateChecks":false}`.
+
+Two more keys:
+
+- `webhook`: an `http(s)` URL. The app POSTs its `/state` JSON plus an `event` field to it on every
+  change: `popup_shown` (with `shownId`), `popup_replaced` (with `shownId` and
+  `replacedId`, both the id that was redrawn), `popup_removed` (with `reason`
+  expired / cancelled / button / back / watchdog, and `removedId`), `started`, `screen_on`,
+  `screen_off`, `permissions`, and `settings` right after the webhook is set. A failed POST is
+  retried once after 2 s. Empty turns push off. `/settings` answers only whether one is set: the URL
+  is the controller's secret. `/state.push` shows the last push result.
+- `updateSource`: `github:<owner>/<repo>` (default `github:mhoogenbosch/PiPup`), or an `http(s)` folder
+  URL holding `releases.json` (GitHub's `/releases` answer saved as is) and the APKs under their
+  release names. The first release that is neither draft nor prerelease wins. Empty resets to the
+  default. A different source cannot slip in a foreign app: Android only installs an update signed
+  with the same key as the installed PiPup.
+
+Like the rest of the API, `/settings` has no authentication: anything on the LAN can change it. Keep
+the TVs on a network you trust.
+
 ### State
 
 | Property      | Value            |
@@ -790,6 +860,10 @@ Returns the current state as JSON:
   "uptime": 86400,
   "device": { "model": "AFTKA", "manufacturer": "Amazon", "android": "9" },
   "popup": { "id": "doorbell", "duration": 0, "indefinite": true, "elapsed": 42 },
+  "popups": [
+    { "id": "fantasy", "position": "TopRight", "duration": 0, "indefinite": true, "elapsed": 900, "media": "web" },
+    { "id": "doorbell", "position": "BottomRight", "duration": 0, "indefinite": true, "elapsed": 42, "media": "video" }
+  ],
   "power": { "canWake": true, "canSleep": true, "sleepMethod": "device_admin" },
   "permissions": {
     "overlay": true, "installPackages": true, "autoStart": null,
@@ -798,6 +872,10 @@ Returns the current state as JSON:
   }
 }
 ```
+
+Since v0.24.0 `popups` lists every popup on screen in stack order (the last one is on top; `id` is
+`null` for the popup sent without an id). `visible` is true while any popup is up, and `popup` is the
+one on top, so a caller written for one popup at a time keeps working.
 
 Since v0.7.0 `permissions` reports what the app was actually granted, and `power` what it can do with
 the screen (see [Screen on/off](#screen-onoff)). `overlay: false` is the one to watch: popups are then
@@ -825,6 +903,11 @@ records `id` (the stable device id), `name` and `version`, enabling automatic di
 
 CI builds an APK on every push (see `.github/workflows/build.yml`); tagged releases get the APK
 attached automatically. Locally: JDK 17 + Android SDK 35, then `./gradlew assembleDebug`.
+
+## License
+
+[MIT](LICENSE) for the work in this fork. The original PiPup by rogro82 was published without a
+license; its code remains his.
 
 ## Changelog
 

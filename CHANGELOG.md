@@ -7,6 +7,37 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.24.0] — 2026-10-07 (several popups at once, push, see-through popups)
+Built by [David Bebawy (@davbebawy)](https://github.com/davbebawy) in his fork and adopted here with
+his commits and authorship intact.
+### Changed
+- **Several popups at once.** Each popup `id` is its own overlay window, sized to its content. A popup
+  with a new id opens beside the ones on screen (newest on top) instead of replacing them. Popups
+  without an id share one slot and replace each other, as before. Same id with new content redraws in
+  place and keeps its place in the stack; `bringToFront: true` opens it on top instead. Back removes
+  the focused popup (one with buttons) only, and each popup has its own timer.
+- `/cancel`: `?id=` removes that popup only; no id removes the popup without an id; `?all=true`
+  removes every popup.
+### Added
+- `/state.popups`: every popup on screen in stack order (`id`, `position`, `duration`, `indefinite`,
+  `elapsed`, `media`). `visible` and `popup` (the top one) stay for older callers.
+- **Push:** `POST /settings?webhook=<url>` makes the app POST its `/state` JSON plus `event` on every
+  change: `popup_shown` / `popup_replaced` (`shownId`, `replacedId`), `popup_removed` (`reason`:
+  expired, cancelled, button, back, watchdog; `removedId`), `started`, `screen_on`, `screen_off`,
+  `permissions`, and `settings` right after the webhook is set. One retry after 2 s, then dropped.
+  `/state.push` reports support and the last result.
+- `opacity` (0..1) on any popup, so live TV shows through; entrance animations fade to it.
+- `transparent: true` on `web` media: the WebView paints no background, so a page with a transparent
+  body floats over the TV picture.
+- `GET`/`POST /settings`: persistent device settings. `updateChecks=false` stops the twice-daily
+  release check on TVs without internet; `updateSource` = `github:<owner>/<repo>` (default
+  `github:mhoogenbosch/PiPup`) or an `http(s)` folder with `releases.json` and the APKs (LAN mirror).
+  `/state.update` reports `checksEnabled` and `source`.
+- `MIN_HA_PIPUP` raised to 1.22.0: the first integration that knows the new fields and push.
+### Kept from this fork
+- Top/bottom center positions (0.22.0) and the self-update progress (0.23.0) carry over to the new
+  per-popup windows.
+
 ## [v0.23.0] — 2026-10-03 (self-update progress)
 ### Added
 - `/state.update` reports where a self-update is: **`phase`** (`downloading`, `installing`,

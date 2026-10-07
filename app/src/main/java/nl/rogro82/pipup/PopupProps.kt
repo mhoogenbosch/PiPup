@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PopupProps(
     val duration: Int = DEFAULT_DURATION, // seconds; 0 or negative = show until /cancel or replaced
-    val id: String? = null,               // optional identifier: re-notify with the same id and content only reschedules the timer (no view rebuild), /cancel?id= cancels selectively
+    val id: String? = null,               // optional identifier: each id is its own popup window (0.24.0); popups without an id share one. Same id and content only reschedules the timer, /cancel?id= removes that popup
     val position: Position = DEFAULT_POSITION,
     val backgroundColor: String = DEFAULT_BACKGROUND_COLOR,
     val title: String? = null,
@@ -48,15 +48,22 @@ data class PopupProps(
     val padding: Int? = null,
     // 0.19.0: entrance animation (and exit on natural expiry): fade, slide_left,
     // slide_right, slide_top, slide_bottom; null/none = appear instantly (classic).
-    val animation: String? = null
+    val animation: String? = null,
+    // 0.24.0: whole-popup opacity 0..1 (View alpha), so live TV shows through the
+    // popup and its media. null = fully opaque (classic).
+    val opacity: Float? = null,
+    // 0.24.0: a redraw of a popup already on screen (same id, new content) normally keeps
+    // its place in the stack; true opens it on top of the other popups instead.
+    val bringToFront: Boolean = false
 ) {
     val indefinite: Boolean
         get() = duration <= 0
 
-    /// equal except for duration and tts: safe to keep the existing view and only reschedule removal
+    /// equal except for duration, tts, sound and stacking: safe to keep the existing view and
+    /// only reschedule removal
     fun sameContent(other: PopupProps): Boolean =
-        copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null) ==
-                other.copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null)
+        copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null, bringToFront = false) ==
+                other.copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null, bringToFront = false)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Button(val id: String, val label: String)
@@ -83,8 +90,10 @@ data class PopupProps(
         @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
+        // transparent (0.24.0): the WebView paints no background of its own, so a page
+        // whose html/body background is transparent shows the TV picture behind it.
         data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false,
-                       val poster: String? = null): Media()
+                       val poster: String? = null, val transparent: Boolean = false): Media()
         data class Bitmap(val image: android.graphics.Bitmap, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
     }
 
