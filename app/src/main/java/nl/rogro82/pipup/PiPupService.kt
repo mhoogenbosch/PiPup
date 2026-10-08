@@ -742,6 +742,10 @@ class PiPupService : Service(), WebServer.Handler {
         // overflows past ~24.8 days and a negative delay removes the popup instantly
     }
 
+    /// [PopupProps] for logcat and the /notify echo: the callback URL (a single-use
+    /// token) replaced by "<set>"; everything else as received (2026-10-08).
+    private fun PopupProps.redacted(): PopupProps = copy(callback = callback?.let { "<set>" })
+
     /// Slot of a popup: its id, or "" for every popup without one (they replace each other).
     private fun keyOf(id: String?): String = id?.takeIf { it.isNotEmpty() } ?: ""
 
@@ -859,7 +863,7 @@ class PiPupService : Service(), WebServer.Handler {
         var dropped: Shown? = null
         try {
 
-            Log.d(LOG_TAG, "Create popup: $popup")
+            Log.d(LOG_TAG, "Create popup: ${popup.redacted()}")
 
             mLastPopup = popup
             mLastPopupAt = SystemClock.elapsedRealtime()
@@ -1527,15 +1531,18 @@ class PiPupService : Service(), WebServer.Handler {
                                     else -> throw Exception("invalid content-type")
                                 }
 
-                                Log.d(LOG_TAG, "received popup: $popup")
+                                // The callback URL carries a single-use token (2026-10-08):
+                                // keep it out of logcat and the echoed reply.
+                                val redacted = popup.redacted()
+                                Log.d(LOG_TAG, "received popup: $redacted")
 
                                 // Answer only once the popup exists and /state reflects it
                                 // (0.17.1). Waits for the view to be built, not for its media
                                 // to load — an RTSP handshake must not hold the reply.
                                 when (runOnMainSync { createPopup(popup) }) {
-                                    true -> OK("$popup")
+                                    true -> OK("$redacted")
                                     false -> ServerError("popup could not be created (see logcat)")
-                                    null -> OK("accepted; main thread busy, popup still queued: $popup")
+                                    null -> OK("accepted; main thread busy, popup still queued: $redacted")
                                 }
 
 
