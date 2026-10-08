@@ -579,6 +579,10 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     domStorageEnabled = true
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    // 2026-10-08: a remote page has no business reading local files or
+                    // content providers; both default to true before Android 11.
+                    allowFileAccess = false
+                    allowContentAccess = false
                 }
                 webViewClient = object : WebViewClient() {
                     // First visible paint of the page (deliberately NOT onPageFinished:
@@ -677,6 +681,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     javaScriptEnabled = true
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    // 2026-10-08: as for web media - no local file or content access
+                    allowFileAccess = false
+                    allowContentAccess = false
                 }
                 // The page reports through document.title, like the web watcher.
                 webChromeClient = object : android.webkit.WebChromeClient() {
