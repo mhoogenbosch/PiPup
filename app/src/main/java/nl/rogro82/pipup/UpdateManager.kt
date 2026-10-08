@@ -129,6 +129,13 @@ object UpdateManager {
     /// Give up a stalled attempt (its confirmation popup expired unconfirmed), so
     /// /state stops reporting an install in progress and the update can be retried.
     fun abandonPending() {
+        val id = pendingSessionId
+        val installer = pendingInstaller
+        if (id != -1 && installer != null) {
+            runCatching { installer.abandonSession(id) }
+                .onFailure { Log.w(LOG_TAG, "abandonSession($id) failed: ${it.message}") }
+        }
+        clearPendingSession()
         pendingConfirm = null
         installStartedAt.set(0)
         resetProgress()
@@ -335,20 +342,27 @@ object UpdateManager {
         (conn as? HttpsURLConnection)?.sslSocketFactory = factory
     }
 
+    /// Returns null once the session is committed, else the reason it was not. Every
+    /// non-null result is also stored in [lastError] (2026-10-08), so a refusal is visible
+    /// in /state even when the caller (POST /update, the popup button) drops the value.
     fun installLatest(context: Context): String? {
-        val url = downloadUrl ?: return "no download URL (run a check first)"
+        val url = downloadUrl ?: return "no download URL (run a check first)".also { lastError = it }
         val now = android.os.SystemClock.elapsedRealtime()
         val running = installStartedAt.get()
         if (running != 0L && now - running < INSTALL_TIMEOUT_MS) {
-            return "an update is already running"
+            return "an update is already running".also { lastError = it }
         }
         // idle, or a stale attempt past its deadline: claim (or steal) the slot
         if (!installStartedAt.compareAndSet(running, now)) {
-            return "an update is already running"
+            return "an update is already running".also { lastError = it }
         }
 
         resetProgress()
         installPhase = "downloading"
+        // Hoisted out of the try (2026-10-08): a session that is created but never
+        // committed must be abandoned, or its staged APK stays on disk until reboot.
+        var installer: PackageInstaller? = null
+        var sessionId = -1
         return try {
             val conn = openWithRedirects(url, readTimeoutMs = 60000)
             if (conn.responseCode != 200) {
@@ -362,7 +376,7 @@ object UpdateManager {
             // Header instead of contentLengthLong: that one needs API 24, minSdk is 23.
             downloadTotalBytes = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
 
-            val installer = context.packageManager.packageInstaller
+            installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(
                 PackageInstaller.SessionParams.MODE_FULL_INSTALL
             )
@@ -375,7 +389,7 @@ object UpdateManager {
                 )
             }
 
-            val sessionId = installer.createSession(params)
+            sessionId = installer.createSession(params)
             installer.openSession(sessionId).use { session ->
                 session.openWrite("pipup.apk", 0, -1).use { out ->
                     // Copy by hand instead of copyTo() so /state can report progress (0.23.0).
@@ -390,21 +404,50 @@ object UpdateManager {
                     }
                     session.fsync(out)
                 }
+                // A connection that drops mid-body ends the stream like a normal EOF, so a
+                // truncated APK would otherwise be committed and fail as "invalid package"
+                // (or worse, be parsed). Only checkable when the server sent a length.
+                val total = downloadTotalBytes
+                if (total > 0 && downloadedBytes != total) {
+                    throw TruncatedDownload("download failed: truncated ($downloadedBytes of $total bytes)")
+                }
                 installPhase = "installing"
                 registerResultReceiver(context)
                 session.commit(pendingIntent(context, sessionId).intentSender)
             }
+            // committed: the installer owns it now; kept so abandonPending() can drop a
+            // session that waits for an on-screen confirmation nobody gives
+            pendingSessionId = sessionId
+            pendingInstaller = installer
             Log.i(LOG_TAG, "Update session $sessionId committed for v$latestVersion")
             lastError = null
             null
         } catch (ex: Throwable) {
+            if (installer != null && sessionId != -1) {
+                runCatching { installer.abandonSession(sessionId) }
+                    .onFailure { Log.w(LOG_TAG, "abandonSession($sessionId) failed: ${it.message}") }
+            }
             installStartedAt.set(0)
             resetProgress()
-            "install failed: ${ex.message ?: ex.javaClass.simpleName}".also {
+            val msg = if (ex is TruncatedDownload) ex.message!!
+                else "install failed: ${ex.message ?: ex.javaClass.simpleName}"
+            msg.also {
                 Log.e(LOG_TAG, it, ex)
                 lastError = it   // 0.19.1: a download/commit exception now shows in /state
             }
         }
+    }
+
+    private class TruncatedDownload(message: String) : Exception(message)
+
+    /// Session committed and not yet concluded (2026-10-08); -1 = none. Lets
+    /// abandonPending() drop a session stuck on the Android < 12 confirmation.
+    @Volatile private var pendingSessionId: Int = -1
+    @Volatile private var pendingInstaller: PackageInstaller? = null
+
+    private fun clearPendingSession() {
+        pendingSessionId = -1
+        pendingInstaller = null
     }
 
     private fun pendingIntent(context: Context, sessionId: Int): PendingIntent {
@@ -448,6 +491,7 @@ object UpdateManager {
                         }
                         PackageInstaller.STATUS_SUCCESS -> {
                             Log.i(LOG_TAG, "Update installed")
+                            clearPendingSession()
                             pendingConfirm = null
                             installStartedAt.set(0)
                             resetProgress()
@@ -456,6 +500,7 @@ object UpdateManager {
                             val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                             lastError = "install status $status: $msg"
                             Log.w(LOG_TAG, lastError!!)
+                            clearPendingSession()
                             pendingConfirm = null
                             installStartedAt.set(0)
                             resetProgress()

@@ -325,6 +325,24 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         translationX = dx * 3000f; translationY = dy * 3000f
     }
 
+    /// Whether [animateOut] is running (2026-10-08). Main thread only.
+    private var mExiting = false
+
+    /// Stop a running exit animation and put the view at rest: in place, at its resting
+    /// alpha (2026-10-08). Used when an update-in-place keeps a popup whose exit animation
+    /// had already started; a no-op otherwise, so an entrance animation runs on. NB a
+    /// cancelled ViewPropertyAnimator still runs its end action (onAnimationEnd follows
+    /// onAnimationCancel), so [animateOut]'s onEnd DOES fire: the caller's generation
+    /// check is what keeps it from removing the popup.
+    fun cancelExit() {
+        if (!mExiting) return
+        mExiting = false
+        animate().cancel()
+        translationX = 0f
+        translationY = 0f
+        alpha = targetAlpha
+    }
+
     /// Exit animation for a popup that expires naturally; [onEnd] performs the real
     /// removal. Callers that replace or cancel a popup skip this and tear down at
     /// once — /cancel's "200 = gone from /state" contract (0.17.1) stays intact.
@@ -340,12 +358,13 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             "slide_bottom" -> { dx = 0f; dy = 1f }
             else -> { dx = 0f; dy = 0f } // fade
         }
+        mExiting = true
         animate()
             .translationX(dx * width)
             .translationY(dy * height)
             .alpha(0f)
             .setDuration(180)
-            .withEndAction { runCatching(onEnd) }
+            .withEndAction { mExiting = false; runCatching(onEnd) }
             .start()
     }
 
@@ -579,6 +598,10 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     domStorageEnabled = true
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    // 2026-10-08: a remote page has no business reading local files or
+                    // content providers; both default to true before Android 11.
+                    allowFileAccess = false
+                    allowContentAccess = false
                 }
                 webViewClient = object : WebViewClient() {
                     // First visible paint of the page (deliberately NOT onPageFinished:
@@ -677,6 +700,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     javaScriptEnabled = true
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    // 2026-10-08: as for web media - no local file or content access
+                    allowFileAccess = false
+                    allowContentAccess = false
                 }
                 // The page reports through document.title, like the web watcher.
                 webChromeClient = object : android.webkit.WebChromeClient() {

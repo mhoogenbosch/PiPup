@@ -46,7 +46,10 @@ class PiPupService : Service(), WebServer.Handler {
         var view: PopupView,
         var props: PopupProps,
         var shownAt: Long,
-        var expire: Runnable? = null
+        var expire: Runnable? = null,
+        /// Bumped on every reschedule and update-in-place (2026-10-08): an exit animation
+        /// only removes the popup when nothing touched it since the animation started.
+        var generation: Int = 0
     )
     /// Every popup on screen, in stack order (last = on top). Main thread only.
     private val mShown = LinkedHashMap<String, Shown>()
@@ -119,11 +122,12 @@ class PiPupService : Service(), WebServer.Handler {
         // released yet (low-memory devices restart this service within seconds). An unguarded
         // start() threw straight out of onCreate, leaving a live process with a dead server -
         // which no external "is the process running?" check can tell apart from a healthy one.
+        // 2026-10-08: no stopSelf() when all attempts fail. START_STICKY only restarts a
+        // *killed* process, not a service that stopped itself, so that left the TV offline
+        // until the next reboot. The service stays up and the watchdog retries the bind.
         mWebServer = WebServer(SERVER_PORT, this)
         if (!startWebServer()) {
-            Log.e(LOG_TAG, "Giving up on port $SERVER_PORT; stopping for a clean restart")
-            stopSelf()
-            return
+            Log.e(LOG_TAG, "Port $SERVER_PORT not bound yet; the watchdog retries every ${WATCHDOG_INTERVAL_MS / 1000} s")
         }
 
         loadSettings()
@@ -202,8 +206,8 @@ class PiPupService : Service(), WebServer.Handler {
         }
     }
 
-    private fun startWebServer(): Boolean {
-        repeat(WEBSERVER_START_ATTEMPTS) { attempt ->
+    private fun startWebServer(attempts: Int = WEBSERVER_START_ATTEMPTS): Boolean {
+        repeat(attempts) { attempt ->
             try {
                 mWebServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
                 Log.d(LOG_TAG, "WebServer started on :$SERVER_PORT (attempt ${attempt + 1})")
@@ -214,7 +218,7 @@ class PiPupService : Service(), WebServer.Handler {
                     mWebServer.stop()
                 } catch (_: Throwable) {
                 }
-                if (attempt < WEBSERVER_START_ATTEMPTS - 1) {
+                if (attempt < attempts - 1) {
                     try {
                         Thread.sleep(WEBSERVER_RETRY_DELAY_MS)
                     } catch (_: InterruptedException) {
@@ -229,7 +233,14 @@ class PiPupService : Service(), WebServer.Handler {
     override fun onDestroy() {
         runCatching { unregisterReceiver(mDreamReceiver) }
         runCatching { unregisterReceiver(mScreenReceiver) }
-        SoundPlayer.stop(this)
+        // 2026-10-08: overlay windows, popup timers and queued requests outlived the
+        // service, and the update callback kept pointing at it. Each step guarded:
+        // onDestroy must never throw.
+        runCatching { removeAllPopups(reason = "service_stopped") }
+        runCatching { mHandler.removeCallbacksAndMessages(null) }
+        runCatching { mRequestHandler.removeCallbacksAndMessages(null) }
+        runCatching { UpdateManager.onPendingUserAction = null }
+        runCatching { SoundPlayer.stop(this) }
         super.onDestroy()
 
         mWatchdogHandler.removeCallbacksAndMessages(null)
@@ -422,8 +433,8 @@ class PiPupService : Service(), WebServer.Handler {
         if (!runCatching { mWebServer.isAlive }.getOrDefault(false)) {
             Log.w(LOG_TAG, "WebServer not running on start command; restarting it")
             if (!startWebServer()) {
-                Log.e(LOG_TAG, "Giving up on port $SERVER_PORT; stopping for a clean restart")
-                stopSelf()
+                // no stopSelf() (2026-10-08): the watchdog keeps retrying the bind
+                Log.e(LOG_TAG, "Port $SERVER_PORT not bound yet; the watchdog retries every ${WATCHDOG_INTERVAL_MS / 1000} s")
             }
         }
         return START_STICKY
@@ -517,6 +528,15 @@ class PiPupService : Service(), WebServer.Handler {
                     }
                 } catch (ex: Throwable) {
                     Log.e(LOG_TAG, "Watchdog error: ${ex.message}")
+                }
+                // A server that never bound (port still held by a killed process) or
+                // died later is started again here (2026-10-08). One attempt per tick:
+                // this runs on the main thread, and the next tick is 30 s away anyway.
+                runCatching {
+                    if (!mWebServer.isAlive) {
+                        Log.w(LOG_TAG, "Watchdog: WebServer not running, retrying bind on :$SERVER_PORT")
+                        startWebServer(attempts = 1)
+                    }
                 }
                 // local check only (no network): a permission lost by a reinstall or
                 // revoked by the system is pushed as soon as it is seen
@@ -677,9 +697,8 @@ class PiPupService : Service(), WebServer.Handler {
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!power.isInteractive || mShownList.isNotEmpty()) return
 
-        prefs.edit().putString(PREF_UPDATE_ANNOUNCED, version).apply()
         mHandler.post {
-            createPopup(
+            val shown = createPopup(
                 PopupProps(
                     duration = 60,
                     id = UPDATE_POPUP_ID,
@@ -689,6 +708,9 @@ class PiPupService : Service(), WebServer.Handler {
                     buttons = listOf(PopupProps.Button("install", getString(R.string.update_install)))
                 )
             )
+            // Marked as announced only once it is actually on screen (2026-10-08): a popup
+            // that failed to build used to count as shown, so the version was never offered.
+            if (shown) prefs.edit().putString(PREF_UPDATE_ANNOUNCED, version).apply()
         }
     }
 
@@ -696,16 +718,20 @@ class PiPupService : Service(), WebServer.Handler {
         entry.expire?.let { mHandler.removeCallbacks(it) }
         entry.expire = null
         // duration <= 0 means: show until /cancel or until replaced
+        entry.generation++
         if (entry.props.indefinite) return
         val view = entry.view
+        val generation = entry.generation
         val expire = Runnable {
             // Natural expiry is the one removal nobody is waiting on, so it may
             // animate (0.19.0); every other path (replace, /cancel, buttons) tears
             // down at once. The identity checks make the animation's end a no-op
-            // when the popup was cancelled or redrawn in the meantime.
+            // when the popup was cancelled or redrawn in the meantime; the generation
+            // check does the same for a same-content re-send during the 180 ms exit.
             if (mShown[entry.key] === entry && entry.view === view) {
                 view.animateOut {
-                    if (mShown[entry.key] === entry && entry.view === view) {
+                    if (mShown[entry.key] === entry && entry.view === view &&
+                        entry.generation == generation) {
                         removePopup(entry.key, reason = "expired")
                     }
                 }
@@ -715,6 +741,10 @@ class PiPupService : Service(), WebServer.Handler {
         mHandler.postDelayed(expire, entry.props.duration * 1000L) // 1000L: an Int*Int product
         // overflows past ~24.8 days and a negative delay removes the popup instantly
     }
+
+    /// [PopupProps] for logcat and the /notify echo: the callback URL (a single-use
+    /// token) replaced by "<set>"; everything else as received (2026-10-08).
+    private fun PopupProps.redacted(): PopupProps = copy(callback = callback?.let { "<set>" })
 
     /// Slot of a popup: its id, or "" for every popup without one (they replace each other).
     private fun keyOf(id: String?): String = id?.takeIf { it.isNotEmpty() } ?: ""
@@ -786,8 +816,16 @@ class PiPupService : Service(), WebServer.Handler {
             // The app's own update popups are handled locally; they have no
             // callback URL and must not be mistaken for user buttons.
             if (shown.id == UPDATE_POPUP_ID) {
+                // No removal here (2026-10-08): showInstallingPopup() uses the same id and
+                // redraws this popup in place. The generic removal posted after it took the
+                // "Installing..." popup down in the same frame (regression from 0.24.0).
                 mHandler.post { showInstallingPopup() }
-                Thread { UpdateManager.installLatest(this) }.start()
+                Thread {
+                    UpdateManager.installLatest(this)?.let { err ->
+                        // already in /state as update.lastError
+                        Log.w(LOG_TAG, "Update from the popup button not started: $err")
+                    }
+                }.start()
             } else if (shown.id == CONFIRM_POPUP_ID) {
                 // Started from a button press = this app has a visible window,
                 // so the system dialog launches reliably and keeps focus.
@@ -800,7 +838,9 @@ class PiPupService : Service(), WebServer.Handler {
             }
             // byButton: a confirm-popup dismissed by its own button must keep the
             // pending install alive (the system dialog was just launched).
-            mHandler.post { removePopup(key, reason = "button", byButton = true) }
+            if (shown.id != UPDATE_POPUP_ID) {
+                mHandler.post { removePopup(key, reason = "button", byButton = true) }
+            }
         }
         return view
     }
@@ -818,9 +858,12 @@ class PiPupService : Service(), WebServer.Handler {
     /// restarts. Same id, new content: the view is swapped inside its window, which keeps
     /// its place in the stack, unless `bringToFront` asks for a new window on top.
     private fun createPopup(popup: PopupProps): Boolean {
+        // bringToFront drops the old window before the new one is added; if adding then
+        // throws, the catch has to report that popup as gone (2026-10-08)
+        var dropped: Shown? = null
         try {
 
-            Log.d(LOG_TAG, "Create popup: $popup")
+            Log.d(LOG_TAG, "Create popup: ${popup.redacted()}")
 
             mLastPopup = popup
             mLastPopupAt = SystemClock.elapsedRealtime()
@@ -841,6 +884,11 @@ class PiPupService : Service(), WebServer.Handler {
                     speak(popup.tts, popup.ttsLanguage)
                 }
                 current.props = popup
+                // A re-send can land inside the exit animation of natural expiry: stop it
+                // and put the view back at rest, and bump the generation so its end action
+                // (should it still fire) no longer removes the popup we just answered 200 for.
+                current.generation++
+                current.view.cancelExit()
                 publishShown()
                 scheduleRemoval(current)
                 return true
@@ -880,6 +928,7 @@ class PiPupService : Service(), WebServer.Handler {
                     // bringToFront: drop the old window without a "removed" push; the
                     // "replaced" push below says what happened
                     mShown.remove(key)
+                    dropped = current
                     current.expire?.let { mHandler.removeCallbacks(it) }
                     destroyView(current.view)
                     removeWindow(current.window)
@@ -924,6 +973,15 @@ class PiPupService : Service(), WebServer.Handler {
 
         } catch (ex: Throwable) {
             Log.e(LOG_TAG, "Create popup failed: ${ex.message}", ex)
+            dropped?.let { old ->
+                // the old window is already gone; without this /state kept listing it
+                if (mShown[keyOf(old.props.id)] == null) {
+                    runCatching {
+                        publishShown()
+                        emit("popup_removed", mapOf("reason" to "replace_failed", "removedId" to old.props.id))
+                    }
+                }
+            }
             return false
         }
     }
@@ -1286,10 +1344,18 @@ class PiPupService : Service(), WebServer.Handler {
                                     // A failed check (offline, GitHub rate limit) leaves the
                                     // previous cache untouched, so this still falls back to a
                                     // known older release instead of doing nothing.
-                                    UpdateManager.check()
+                                    // The reply below goes out before any of this runs, so
+                                    // the outcome is logged and (for a refusal or failure) left
+                                    // in /state's update.lastError (2026-10-08).
+                                    val checked = UpdateManager.check()
                                     if (UpdateManager.updateAvailable) {
                                         mHandler.post { showInstallingPopup() }
-                                        UpdateManager.installLatest(this@PiPupService)
+                                        UpdateManager.installLatest(this@PiPupService)?.let { err ->
+                                            Log.w(LOG_TAG, "POST /update: install not started: $err")
+                                        }
+                                    } else {
+                                        Log.i(LOG_TAG, "POST /update: no newer release than " +
+                                            "${BuildConfig.VERSION_NAME} (check ${if (checked) "ok" else "failed"})")
                                     }
                                 }.start()
                                 OK("update started")
@@ -1361,6 +1427,13 @@ class PiPupService : Service(), WebServer.Handler {
                                     }
                                     contentType.startsWith(MULTIPART_FORM_DATA) -> {
 
+                                        // Cap before parsing (2026-10-08): parseBody spools the
+                                        // whole body to disk, and this port is open to the LAN.
+                                        val declaredLength = session.headers["content-length"]?.toLongOrNull()
+                                        if (declaredLength != null && declaredLength > MAX_MULTIPART_BODY_BYTES) {
+                                            throw Exception("body too large ($declaredLength bytes, max $MAX_MULTIPART_BODY_BYTES)")
+                                        }
+
                                         val files = mutableMapOf<String, String>()
                                         session.parseBody(files)
 
@@ -1394,12 +1467,30 @@ class PiPupService : Service(), WebServer.Handler {
 
                                         val media = when(val image = files["image"]) {
                                             is String -> {
+                                                val imageWidth = params["imageWidth"]?.toIntOrNull() ?: PopupProps.DEFAULT_MEDIA_WIDTH
                                                 // use{}: decodeStream does not close its stream, so
                                                 // every snapshot popup leaked one file descriptor
-                                                val bitmap = File(image).absoluteFile.inputStream()
-                                                    .use { BitmapFactory.decodeStream(it) }
+                                                val file = File(image).absoluteFile
+                                                // 2026-10-08: read the dimensions first. A full decode of
+                                                // a huge-dimension image (a few KB of PNG can declare
+                                                // 50000x50000) ran the whole process out of memory.
+                                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                file.inputStream().use { BitmapFactory.decodeStream(it, null, bounds) }
+                                                val w = bounds.outWidth
+                                                val h = bounds.outHeight
+                                                if (w <= 0 || h <= 0) throw Exception("could not decode the uploaded image")
+                                                if (w.toLong() * h > MAX_IMAGE_PIXELS) {
+                                                    throw Exception("image too large (${w}x${h}, max ${MAX_IMAGE_PIXELS / 1_000_000} MP)")
+                                                }
+                                                // downsample by powers of two until the longer side fits;
+                                                // anything up to 4096 px decodes at full size, as before
+                                                val maxSide = maxOf(MAX_IMAGE_SIDE_PX.toLong(), 2L * imageWidth)
+                                                var sample = 1
+                                                while (maxOf(w, h).toLong() / sample > maxSide) sample *= 2
+                                                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                                                val bitmap = file.inputStream()
+                                                    .use { BitmapFactory.decodeStream(it, null, opts) }
                                                     ?: throw Exception("could not decode the uploaded image")
-                                                val imageWidth = params["imageWidth"]?.toIntOrNull() ?: PopupProps.DEFAULT_MEDIA_WIDTH
                                                 PopupProps.Media.Bitmap(image = bitmap, width = imageWidth)
                                             }
                                             else -> null
@@ -1440,15 +1531,18 @@ class PiPupService : Service(), WebServer.Handler {
                                     else -> throw Exception("invalid content-type")
                                 }
 
-                                Log.d(LOG_TAG, "received popup: $popup")
+                                // The callback URL carries a single-use token (2026-10-08):
+                                // keep it out of logcat and the echoed reply.
+                                val redacted = popup.redacted()
+                                Log.d(LOG_TAG, "received popup: $redacted")
 
                                 // Answer only once the popup exists and /state reflects it
                                 // (0.17.1). Waits for the view to be built, not for its media
                                 // to load — an RTSP handshake must not hold the reply.
                                 when (runOnMainSync { createPopup(popup) }) {
-                                    true -> OK("$popup")
+                                    true -> OK("$redacted")
                                     false -> ServerError("popup could not be created (see logcat)")
-                                    null -> OK("accepted; main thread busy, popup still queued: $popup")
+                                    null -> OK("accepted; main thread busy, popup still queued: $redacted")
                                 }
 
 
@@ -1488,6 +1582,10 @@ class PiPupService : Service(), WebServer.Handler {
         const val WEBSERVER_RETRY_DELAY_MS = 500L
         const val TTS_IDLE_TIMEOUT_MS = 60_000L
         const val MAX_JSON_BODY_BYTES = 256 * 1024
+        // multipart /notify (2026-10-08): body cap, and the image limits for the upload
+        const val MAX_MULTIPART_BODY_BYTES = 32L * 1024 * 1024
+        const val MAX_IMAGE_PIXELS = 32_000_000L
+        const val MAX_IMAGE_SIDE_PX = 4096
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"
         // How long /notify and /cancel wait for the main thread before answering anyway.

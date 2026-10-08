@@ -59,11 +59,14 @@ data class PopupProps(
     val indefinite: Boolean
         get() = duration <= 0
 
-    /// equal except for duration, tts, sound and stacking: safe to keep the existing view and
-    /// only reschedule removal
+    /// equal except for duration, tts, sound, stacking and callback: safe to keep the existing
+    /// view and only reschedule removal. `callback` is left out (2026-10-08) because the HA
+    /// integration issues a fresh single-use token URL on every show, so comparing it made
+    /// every re-send rebuild the view; the button handler reads the callback from the props
+    /// on screen, which the update-in-place path replaces. Buttons themselves still count.
     fun sameContent(other: PopupProps): Boolean =
-        copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null, bringToFront = false) ==
-                other.copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null, bringToFront = false)
+        copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null, bringToFront = false, callback = null) ==
+                other.copy(duration = 0, tts = null, ttsLanguage = null, sound = null, soundVolume = null, bringToFront = false, callback = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Button(val id: String, val label: String)
