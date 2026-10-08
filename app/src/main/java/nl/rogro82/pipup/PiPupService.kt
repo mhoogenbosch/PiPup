@@ -690,9 +690,8 @@ class PiPupService : Service(), WebServer.Handler {
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!power.isInteractive || mShownList.isNotEmpty()) return
 
-        prefs.edit().putString(PREF_UPDATE_ANNOUNCED, version).apply()
         mHandler.post {
-            createPopup(
+            val shown = createPopup(
                 PopupProps(
                     duration = 60,
                     id = UPDATE_POPUP_ID,
@@ -702,6 +701,9 @@ class PiPupService : Service(), WebServer.Handler {
                     buttons = listOf(PopupProps.Button("install", getString(R.string.update_install)))
                 )
             )
+            // Marked as announced only once it is actually on screen (2026-10-08): a popup
+            // that failed to build used to count as shown, so the version was never offered.
+            if (shown) prefs.edit().putString(PREF_UPDATE_ANNOUNCED, version).apply()
         }
     }
 
