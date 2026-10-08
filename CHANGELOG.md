@@ -7,6 +7,44 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.25.1] — 2026-10-08 (audit fixes)
+### Fixed
+- **Port bind failure no longer leaves the TV offline.** When `:7979` could not be bound after three
+  attempts the service called `stopSelf()`, which `START_STICKY` does not undo. It now keeps running
+  and the 30 s watchdog retries the bind (one attempt per tick, logged) until it succeeds.
+- **Install button keeps the "Installing PiPup vX" popup up** (regression in 0.24.0). The generic
+  button removal was posted right after the in-place redraw and took it down in the same frame; the
+  update popup is no longer removed by its own button. Other buttons are unchanged.
+- **Re-send with a new callback URL updates in place.** `sameContent` no longer compares `callback`
+  (the integration sends a fresh single-use token on every show), so the view and its stream are kept;
+  the button handler already reads the callback from the props on screen. Buttons still count.
+- **Re-send during the exit animation keeps the popup.** A same-content re-send within the 180 ms exit
+  animation was answered 200 and then removed by the animation's end. A per-popup generation counter
+  stops that end action, and the exit animation is cancelled with the popup restored to rest.
+- **bringToFront window failure is reported.** When adding the new window threw, the old popup was
+  already gone but `/state` still listed it. It is now republished and pushed as `popup_removed`
+  (`reason`: `replace_failed`).
+- **Push queue is bounded.** At most 16 pushes wait (oldest dropped, logged once); the 2 s retry is
+  skipped when a newer push is waiting, and a 4xx answer is not retried. Still one thread, in order.
+- **Self-update cleans up after itself.** A failed install abandons its PackageInstaller session, an
+  expired on-screen confirmation abandons the committed session, and a download that ends before its
+  Content-Length fails as `download failed: truncated (x of y bytes)` instead of being committed.
+- **Update refusals are visible.** `installLatest()` now stores every refusal in `update.lastError`
+  ("no download URL", "an update is already running"); `POST /update` and the popup button log the
+  outcome, including "no newer release". The reply is still `update started`.
+- **Update announcement is marked only once shown.** The "update available" popup counted as shown
+  before it was built; a popup that failed to build meant that version was never offered again.
+- **Service stop cleans up.** `onDestroy` removes all popups (`popup_removed`, `reason`:
+  `service_stopped`), clears the popup and request handlers and drops the update callback.
+### Changed
+- **Multipart `/notify` limits.** Bodies above 32 MB are refused before parsing; uploaded images
+  above 32 MP are refused (400), larger images are downsampled so the longer side is at most
+  max(4096 px, 2 × `imageWidth`). Smaller images decode at full size, as before.
+- **WebView hardening.** `web` and `whep` popups set `allowFileAccess` and `allowContentAccess` to
+  false; JavaScript, DOM storage, autoplay and mixed-content settings are unchanged.
+- **Callback URL redacted.** logcat and the `/notify` reply show `callback=<set>` instead of the URL
+  with its single-use token; every other field is echoed as before.
+
 ## [v0.25.0] — 2026-10-07 (WHEP: WebRTC without the player page)
 Idea from [lapicidae/PiPup](https://github.com/lapicidae/PiPup); implemented independently.
 ### Added
