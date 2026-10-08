@@ -233,7 +233,14 @@ class PiPupService : Service(), WebServer.Handler {
     override fun onDestroy() {
         runCatching { unregisterReceiver(mDreamReceiver) }
         runCatching { unregisterReceiver(mScreenReceiver) }
-        SoundPlayer.stop(this)
+        // 2026-10-08: overlay windows, popup timers and queued requests outlived the
+        // service, and the update callback kept pointing at it. Each step guarded:
+        // onDestroy must never throw.
+        runCatching { removeAllPopups(reason = "service_stopped") }
+        runCatching { mHandler.removeCallbacksAndMessages(null) }
+        runCatching { mRequestHandler.removeCallbacksAndMessages(null) }
+        runCatching { UpdateManager.onPendingUserAction = null }
+        runCatching { SoundPlayer.stop(this) }
         super.onDestroy()
 
         mWatchdogHandler.removeCallbacksAndMessages(null)
