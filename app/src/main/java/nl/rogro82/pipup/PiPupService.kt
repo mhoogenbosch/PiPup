@@ -845,6 +845,9 @@ class PiPupService : Service(), WebServer.Handler {
     /// restarts. Same id, new content: the view is swapped inside its window, which keeps
     /// its place in the stack, unless `bringToFront` asks for a new window on top.
     private fun createPopup(popup: PopupProps): Boolean {
+        // bringToFront drops the old window before the new one is added; if adding then
+        // throws, the catch has to report that popup as gone (2026-10-08)
+        var dropped: Shown? = null
         try {
 
             Log.d(LOG_TAG, "Create popup: $popup")
@@ -912,6 +915,7 @@ class PiPupService : Service(), WebServer.Handler {
                     // bringToFront: drop the old window without a "removed" push; the
                     // "replaced" push below says what happened
                     mShown.remove(key)
+                    dropped = current
                     current.expire?.let { mHandler.removeCallbacks(it) }
                     destroyView(current.view)
                     removeWindow(current.window)
@@ -956,6 +960,15 @@ class PiPupService : Service(), WebServer.Handler {
 
         } catch (ex: Throwable) {
             Log.e(LOG_TAG, "Create popup failed: ${ex.message}", ex)
+            dropped?.let { old ->
+                // the old window is already gone; without this /state kept listing it
+                if (mShown[keyOf(old.props.id)] == null) {
+                    runCatching {
+                        publishShown()
+                        emit("popup_removed", mapOf("reason" to "replace_failed", "removedId" to old.props.id))
+                    }
+                }
+            }
             return false
         }
     }
