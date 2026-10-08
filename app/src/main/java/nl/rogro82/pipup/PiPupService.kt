@@ -796,8 +796,16 @@ class PiPupService : Service(), WebServer.Handler {
             // The app's own update popups are handled locally; they have no
             // callback URL and must not be mistaken for user buttons.
             if (shown.id == UPDATE_POPUP_ID) {
+                // No removal here (2026-10-08): showInstallingPopup() uses the same id and
+                // redraws this popup in place. The generic removal posted after it took the
+                // "Installing..." popup down in the same frame (regression from 0.24.0).
                 mHandler.post { showInstallingPopup() }
-                Thread { UpdateManager.installLatest(this) }.start()
+                Thread {
+                    UpdateManager.installLatest(this)?.let { err ->
+                        // already in /state as update.lastError
+                        Log.w(LOG_TAG, "Update from the popup button not started: $err")
+                    }
+                }.start()
             } else if (shown.id == CONFIRM_POPUP_ID) {
                 // Started from a button press = this app has a visible window,
                 // so the system dialog launches reliably and keeps focus.
@@ -810,7 +818,9 @@ class PiPupService : Service(), WebServer.Handler {
             }
             // byButton: a confirm-popup dismissed by its own button must keep the
             // pending install alive (the system dialog was just launched).
-            mHandler.post { removePopup(key, reason = "button", byButton = true) }
+            if (shown.id != UPDATE_POPUP_ID) {
+                mHandler.post { removePopup(key, reason = "button", byButton = true) }
+            }
         }
         return view
     }
@@ -1296,10 +1306,18 @@ class PiPupService : Service(), WebServer.Handler {
                                     // A failed check (offline, GitHub rate limit) leaves the
                                     // previous cache untouched, so this still falls back to a
                                     // known older release instead of doing nothing.
-                                    UpdateManager.check()
+                                    // The reply below goes out before any of this runs, so
+                                    // the outcome is logged and (for a refusal or failure) left
+                                    // in /state's update.lastError (2026-10-08).
+                                    val checked = UpdateManager.check()
                                     if (UpdateManager.updateAvailable) {
                                         mHandler.post { showInstallingPopup() }
-                                        UpdateManager.installLatest(this@PiPupService)
+                                        UpdateManager.installLatest(this@PiPupService)?.let { err ->
+                                            Log.w(LOG_TAG, "POST /update: install not started: $err")
+                                        }
+                                    } else {
+                                        Log.i(LOG_TAG, "POST /update: no newer release than " +
+                                            "${BuildConfig.VERSION_NAME} (check ${if (checked) "ok" else "failed"})")
                                     }
                                 }.start()
                                 OK("update started")
