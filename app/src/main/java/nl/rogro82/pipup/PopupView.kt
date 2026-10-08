@@ -325,6 +325,22 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         translationX = dx * 3000f; translationY = dy * 3000f
     }
 
+    /// Whether [animateOut] is running (2026-10-08). Main thread only.
+    private var mExiting = false
+
+    /// Stop a running exit animation and put the view at rest: in place, at its resting
+    /// alpha (2026-10-08). Used when an update-in-place keeps a popup whose exit animation
+    /// had already started; a no-op otherwise, so an entrance animation runs on. A
+    /// cancelled animation never runs its end action, so [animateOut]'s onEnd is skipped.
+    fun cancelExit() {
+        if (!mExiting) return
+        mExiting = false
+        animate().cancel()
+        translationX = 0f
+        translationY = 0f
+        alpha = targetAlpha
+    }
+
     /// Exit animation for a popup that expires naturally; [onEnd] performs the real
     /// removal. Callers that replace or cancel a popup skip this and tear down at
     /// once — /cancel's "200 = gone from /state" contract (0.17.1) stays intact.
@@ -340,12 +356,13 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             "slide_bottom" -> { dx = 0f; dy = 1f }
             else -> { dx = 0f; dy = 0f } // fade
         }
+        mExiting = true
         animate()
             .translationX(dx * width)
             .translationY(dy * height)
             .alpha(0f)
             .setDuration(180)
-            .withEndAction { runCatching(onEnd) }
+            .withEndAction { mExiting = false; runCatching(onEnd) }
             .start()
     }
 

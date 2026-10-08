@@ -46,7 +46,10 @@ class PiPupService : Service(), WebServer.Handler {
         var view: PopupView,
         var props: PopupProps,
         var shownAt: Long,
-        var expire: Runnable? = null
+        var expire: Runnable? = null,
+        /// Bumped on every reschedule and update-in-place (2026-10-08): an exit animation
+        /// only removes the popup when nothing touched it since the animation started.
+        var generation: Int = 0
     )
     /// Every popup on screen, in stack order (last = on top). Main thread only.
     private val mShown = LinkedHashMap<String, Shown>()
@@ -706,16 +709,20 @@ class PiPupService : Service(), WebServer.Handler {
         entry.expire?.let { mHandler.removeCallbacks(it) }
         entry.expire = null
         // duration <= 0 means: show until /cancel or until replaced
+        entry.generation++
         if (entry.props.indefinite) return
         val view = entry.view
+        val generation = entry.generation
         val expire = Runnable {
             // Natural expiry is the one removal nobody is waiting on, so it may
             // animate (0.19.0); every other path (replace, /cancel, buttons) tears
             // down at once. The identity checks make the animation's end a no-op
-            // when the popup was cancelled or redrawn in the meantime.
+            // when the popup was cancelled or redrawn in the meantime; the generation
+            // check does the same for a same-content re-send during the 180 ms exit.
             if (mShown[entry.key] === entry && entry.view === view) {
                 view.animateOut {
-                    if (mShown[entry.key] === entry && entry.view === view) {
+                    if (mShown[entry.key] === entry && entry.view === view &&
+                        entry.generation == generation) {
                         removePopup(entry.key, reason = "expired")
                     }
                 }
@@ -861,6 +868,11 @@ class PiPupService : Service(), WebServer.Handler {
                     speak(popup.tts, popup.ttsLanguage)
                 }
                 current.props = popup
+                // A re-send can land inside the exit animation of natural expiry: stop it
+                // and put the view back at rest, and bump the generation so its end action
+                // (should it still fire) no longer removes the popup we just answered 200 for.
+                current.generation++
+                current.view.cancelExit()
                 publishShown()
                 scheduleRemoval(current)
                 return true
