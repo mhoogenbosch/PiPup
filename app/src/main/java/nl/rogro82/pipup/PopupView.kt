@@ -330,8 +330,10 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
     /// Stop a running exit animation and put the view at rest: in place, at its resting
     /// alpha (2026-10-08). Used when an update-in-place keeps a popup whose exit animation
-    /// had already started; a no-op otherwise, so an entrance animation runs on. A
-    /// cancelled animation never runs its end action, so [animateOut]'s onEnd is skipped.
+    /// had already started; a no-op otherwise, so an entrance animation runs on. NB a
+    /// cancelled ViewPropertyAnimator still runs its end action (onAnimationEnd follows
+    /// onAnimationCancel), so [animateOut]'s onEnd DOES fire: the caller's generation
+    /// check is what keeps it from removing the popup.
     fun cancelExit() {
         if (!mExiting) return
         mExiting = false
