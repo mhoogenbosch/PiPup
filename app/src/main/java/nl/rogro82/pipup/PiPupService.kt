@@ -119,11 +119,12 @@ class PiPupService : Service(), WebServer.Handler {
         // released yet (low-memory devices restart this service within seconds). An unguarded
         // start() threw straight out of onCreate, leaving a live process with a dead server -
         // which no external "is the process running?" check can tell apart from a healthy one.
+        // 2026-10-08: no stopSelf() when all attempts fail. START_STICKY only restarts a
+        // *killed* process, not a service that stopped itself, so that left the TV offline
+        // until the next reboot. The service stays up and the watchdog retries the bind.
         mWebServer = WebServer(SERVER_PORT, this)
         if (!startWebServer()) {
-            Log.e(LOG_TAG, "Giving up on port $SERVER_PORT; stopping for a clean restart")
-            stopSelf()
-            return
+            Log.e(LOG_TAG, "Port $SERVER_PORT not bound yet; the watchdog retries every ${WATCHDOG_INTERVAL_MS / 1000} s")
         }
 
         loadSettings()
@@ -202,8 +203,8 @@ class PiPupService : Service(), WebServer.Handler {
         }
     }
 
-    private fun startWebServer(): Boolean {
-        repeat(WEBSERVER_START_ATTEMPTS) { attempt ->
+    private fun startWebServer(attempts: Int = WEBSERVER_START_ATTEMPTS): Boolean {
+        repeat(attempts) { attempt ->
             try {
                 mWebServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
                 Log.d(LOG_TAG, "WebServer started on :$SERVER_PORT (attempt ${attempt + 1})")
@@ -214,7 +215,7 @@ class PiPupService : Service(), WebServer.Handler {
                     mWebServer.stop()
                 } catch (_: Throwable) {
                 }
-                if (attempt < WEBSERVER_START_ATTEMPTS - 1) {
+                if (attempt < attempts - 1) {
                     try {
                         Thread.sleep(WEBSERVER_RETRY_DELAY_MS)
                     } catch (_: InterruptedException) {
@@ -422,8 +423,8 @@ class PiPupService : Service(), WebServer.Handler {
         if (!runCatching { mWebServer.isAlive }.getOrDefault(false)) {
             Log.w(LOG_TAG, "WebServer not running on start command; restarting it")
             if (!startWebServer()) {
-                Log.e(LOG_TAG, "Giving up on port $SERVER_PORT; stopping for a clean restart")
-                stopSelf()
+                // no stopSelf() (2026-10-08): the watchdog keeps retrying the bind
+                Log.e(LOG_TAG, "Port $SERVER_PORT not bound yet; the watchdog retries every ${WATCHDOG_INTERVAL_MS / 1000} s")
             }
         }
         return START_STICKY
@@ -517,6 +518,15 @@ class PiPupService : Service(), WebServer.Handler {
                     }
                 } catch (ex: Throwable) {
                     Log.e(LOG_TAG, "Watchdog error: ${ex.message}")
+                }
+                // A server that never bound (port still held by a killed process) or
+                // died later is started again here (2026-10-08). One attempt per tick:
+                // this runs on the main thread, and the next tick is 30 s away anyway.
+                runCatching {
+                    if (!mWebServer.isAlive) {
+                        Log.w(LOG_TAG, "Watchdog: WebServer not running, retrying bind on :$SERVER_PORT")
+                        startWebServer(attempts = 1)
+                    }
                 }
                 // local check only (no network): a permission lost by a reinstall or
                 // revoked by the system is pushed as soon as it is seen
