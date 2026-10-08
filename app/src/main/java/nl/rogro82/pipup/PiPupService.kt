@@ -1423,6 +1423,13 @@ class PiPupService : Service(), WebServer.Handler {
                                     }
                                     contentType.startsWith(MULTIPART_FORM_DATA) -> {
 
+                                        // Cap before parsing (2026-10-08): parseBody spools the
+                                        // whole body to disk, and this port is open to the LAN.
+                                        val declaredLength = session.headers["content-length"]?.toLongOrNull()
+                                        if (declaredLength != null && declaredLength > MAX_MULTIPART_BODY_BYTES) {
+                                            throw Exception("body too large ($declaredLength bytes, max $MAX_MULTIPART_BODY_BYTES)")
+                                        }
+
                                         val files = mutableMapOf<String, String>()
                                         session.parseBody(files)
 
@@ -1456,12 +1463,30 @@ class PiPupService : Service(), WebServer.Handler {
 
                                         val media = when(val image = files["image"]) {
                                             is String -> {
+                                                val imageWidth = params["imageWidth"]?.toIntOrNull() ?: PopupProps.DEFAULT_MEDIA_WIDTH
                                                 // use{}: decodeStream does not close its stream, so
                                                 // every snapshot popup leaked one file descriptor
-                                                val bitmap = File(image).absoluteFile.inputStream()
-                                                    .use { BitmapFactory.decodeStream(it) }
+                                                val file = File(image).absoluteFile
+                                                // 2026-10-08: read the dimensions first. A full decode of
+                                                // a huge-dimension image (a few KB of PNG can declare
+                                                // 50000x50000) ran the whole process out of memory.
+                                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                file.inputStream().use { BitmapFactory.decodeStream(it, null, bounds) }
+                                                val w = bounds.outWidth
+                                                val h = bounds.outHeight
+                                                if (w <= 0 || h <= 0) throw Exception("could not decode the uploaded image")
+                                                if (w.toLong() * h > MAX_IMAGE_PIXELS) {
+                                                    throw Exception("image too large (${w}x${h}, max ${MAX_IMAGE_PIXELS / 1_000_000} MP)")
+                                                }
+                                                // downsample by powers of two until the longer side fits;
+                                                // anything up to 4096 px decodes at full size, as before
+                                                val maxSide = maxOf(MAX_IMAGE_SIDE_PX.toLong(), 2L * imageWidth)
+                                                var sample = 1
+                                                while (maxOf(w, h).toLong() / sample > maxSide) sample *= 2
+                                                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                                                val bitmap = file.inputStream()
+                                                    .use { BitmapFactory.decodeStream(it, null, opts) }
                                                     ?: throw Exception("could not decode the uploaded image")
-                                                val imageWidth = params["imageWidth"]?.toIntOrNull() ?: PopupProps.DEFAULT_MEDIA_WIDTH
                                                 PopupProps.Media.Bitmap(image = bitmap, width = imageWidth)
                                             }
                                             else -> null
@@ -1550,6 +1575,10 @@ class PiPupService : Service(), WebServer.Handler {
         const val WEBSERVER_RETRY_DELAY_MS = 500L
         const val TTS_IDLE_TIMEOUT_MS = 60_000L
         const val MAX_JSON_BODY_BYTES = 256 * 1024
+        // multipart /notify (2026-10-08): body cap, and the image limits for the upload
+        const val MAX_MULTIPART_BODY_BYTES = 32L * 1024 * 1024
+        const val MAX_IMAGE_PIXELS = 32_000_000L
+        const val MAX_IMAGE_SIDE_PX = 4096
         const val MULTIPART_FORM_DATA = "multipart/form-data"
         const val APPLICATION_JSON = "application/json"
         // How long /notify and /cancel wait for the main thread before answering anyway.
