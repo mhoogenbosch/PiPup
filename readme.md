@@ -673,6 +673,11 @@ Since 0.24.0 several popups can be up at once:
 
 When nothing matches, the call is a no-op (HTTP 200 with an explanatory message).
 
+> **Breaking since 0.24.0:** before, `POST /cancel` without an id removed whatever popup was on screen.
+> Now it only removes a popup sent *without* an id. A client that shows popups with an `id` and cancels
+> without one leaves them up — with `duration: 0` for good — and still gets `200`. Cancel with the same
+> `id`, or with `?all=true`.
+
 ### Screen on/off
 
 | Property      | Value                        |
