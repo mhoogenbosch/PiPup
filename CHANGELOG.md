@@ -7,6 +7,11 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [Unreleased]
+### Docs
+- `/cancel`: the v0.24.0 change for a cancel without id is now marked breaking, in the readme and the
+  v0.24.0 entry below.
+
 ## [v0.25.2] — 2026-10-10 (self-update on Android 6, for real)
 ### Fixed
 - **Bundled ISRG Root X1 now loads on Android 6** (#41). The certificate was stored as a raw-string
@@ -87,7 +92,9 @@ his commits and authorship intact.
   place and keeps its place in the stack; `bringToFront: true` opens it on top instead. Back removes
   the focused popup (one with buttons) only, and each popup has its own timer.
 - `/cancel`: `?id=` removes that popup only; no id removes the popup without an id; `?all=true`
-  removes every popup.
+  removes every popup. **Breaking** *(note added 2026-10-10)*: a `/cancel` without id used to remove
+  whatever was on screen; popups shown with an `id` now stay up unless cancelled with that `id` or
+  `all=true`, and the call still answers `200`.
 ### Added
 - `/state.popups`: every popup on screen in stack order (`id`, `position`, `duration`, `indefinite`,
   `elapsed`, `media`). `visible` and `popup` (the top one) stay for older callers.
