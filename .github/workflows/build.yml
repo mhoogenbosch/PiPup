@@ -37,6 +37,9 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
       # Optional consistent signing: set the KEYSTORE_BASE64, KEYSTORE_PASSWORD,
       # KEY_ALIAS and KEY_PASSWORD repository secrets. Without them the debug APK
       # (signed with an ephemeral debug key) is published instead.

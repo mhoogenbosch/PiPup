@@ -266,8 +266,13 @@ object UpdateManager {
     /// anything in the setup throws, so modern devices can never be worse off.
     private val legacySafeSocketFactory: SSLSocketFactory? by lazy {
         try {
+            // Feed DER bytes, never the PEM text: Android 6's Conscrypt only treats the stream
+            // as PEM when its very FIRST byte is '-', so the raw string's leading newline sent
+            // it down the DER path ("asn1_check_tlen:WRONG_TAG") and the bundled root was
+            // never loaded (#41, seen via update.tlsFactory). DER parses on every version.
+            val der = pemToDer(ISRG_ROOT_X1_PEM) { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
             val cf = CertificateFactory.getInstance("X.509")
-            val isrg = cf.generateCertificate(ISRG_ROOT_X1_PEM.byteInputStream()) as X509Certificate
+            val isrg = cf.generateCertificate(der.inputStream()) as X509Certificate
 
             fun managerFor(keyStore: KeyStore?): X509TrustManager {
                 val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
@@ -529,10 +534,20 @@ object UpdateManager {
         return false
     }
 
+    /// Strip the PEM armour and whitespace and decode the base64 body to DER. The decoder is
+    /// passed in so unit tests (plain JVM, no android.util.Base64) can use java.util.Base64.
+    internal fun pemToDer(pem: String, decode: (String) -> ByteArray): ByteArray =
+        decode(
+            pem.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("-----") }
+                .joinToString("")
+        )
+
     /// ISRG Root X1 (Let's Encrypt), self-signed, valid until 2035-06-04. Public root
     /// certificate, verified against the published SHA-256 fingerprint
     /// 96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6.
-    private const val ISRG_ROOT_X1_PEM = """
+    internal const val ISRG_ROOT_X1_PEM = """
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
 TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
