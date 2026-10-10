@@ -7,6 +7,19 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
+## [v0.25.2] — 2026-10-10 (self-update on Android 6, for real)
+### Fixed
+- **Bundled ISRG Root X1 now loads on Android 6** (#41). The certificate was stored as a raw-string
+  PEM with a leading newline; Android 6's Conscrypt only parses a stream as PEM when its first byte is
+  `-`, so it tried DER and failed with `asn1_check_tlen:WRONG_TAG`. The updater silently fell back to
+  the system trust store (`update.tlsFactory: platform-default: …`), which on Android < 7.1.1 lacks
+  ISRG Root X1 — so neither 0.19.3 nor 0.21.1's redirect fix could take effect. The PEM is now decoded
+  to DER before it reaches `CertificateFactory`, which every Android version parses.
+  Diagnosed thanks to the `update.tlsFactory` field from 0.21.1 (reported by @bboykaos).
+### Added
+- Unit tests for the bundled root (DER starts with an ASN.1 SEQUENCE, SHA-256 fingerprint matches the
+  published ISRG Root X1, parses as X.509); CI runs `testDebugUnitTest` before building.
+
 ## [v0.25.1] — 2026-10-08 (audit fixes)
 ### Fixed
 - **Port bind failure no longer leaves the TV offline.** When `:7979` could not be bound after three
