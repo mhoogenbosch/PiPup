@@ -8,6 +8,15 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+
+## [v0.26.0] — 2026-10-11 (center left / center right)
+### Added
+- **`position` 7 = CenterLeft and 8 = CenterRight** (#62, requested by @bboykaos) — the 3×3 grid is
+  complete. Vertically centred, 20 px from the side edge, so `TopRight`/`CenterRight`/`BottomRight`
+  stack along one side without overlapping when several popups are shown at once. Appended after the
+  existing values; nothing moves for existing callers. The matching ha-pipup release is 1.25.0.
+- A unit test pins the `Position` declaration order, which is the wire contract for the integer
+  `position` (multipart, JSON and the ha-pipup integration all map by ordinal).
 ### Docs
 - `/cancel`: the v0.24.0 change for a cancel without id is now marked breaking, in the readme and the
   v0.24.0 entry below.

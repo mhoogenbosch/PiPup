@@ -623,7 +623,7 @@ Form-fields:
 | --------------- | -------------------------------------------- |
 | duration        | Integer (default=30, 0=indefinite)           |
 | id              | String (optional popup identifier)           |
-| position        | Integer (0..4, default=0)                    |
+| position        | Integer (0..8, default=0)                    |
 | title           | String                                       |
 | titleSize       | Integer (default=16)                         |
 | titleColor      | string (default=#FFFFFF, format=[AA]RRGGBB   |
@@ -644,7 +644,7 @@ Form-fields:
 | iconWidth       | Integer pixels (default=96, since 0.13.0)    |
 | showProgress    | Boolean (default=false, since 0.7.0)         |
 
-`position` is an enum ranging from 0 to 6:
+`position` is an enum ranging from 0 to 8 — the full 3×3 grid:
 
 |  | Position    |
 | -----: | ----------- |
@@ -655,6 +655,12 @@ Form-fields:
 | 4     | Center      |
 | 5     | TopCenter (since 0.22.0) |
 | 6     | BottomCenter (since 0.22.0) |
+| 7     | CenterLeft (since 0.26.0) |
+| 8     | CenterRight (since 0.26.0) |
+
+Edge positions keep a 20 px margin from the screen edge; on a centred axis the popup is centred
+exactly. `TopRight`, `CenterRight` and `BottomRight` therefore stack cleanly along one side when
+several popups (with their own `id`) are shown at once.
 
 Color-properties are in `[AA]RRGGBB` where the alpha channel is optional, e.g. #FFFFFF or #CCFFFFFF.
 

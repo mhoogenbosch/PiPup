@@ -792,14 +792,18 @@ class PiPupService : Service(), WebServer.Handler {
                 PopupProps.Position.Center -> Gravity.CENTER
                 PopupProps.Position.TopCenter -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 PopupProps.Position.BottomCenter -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                PopupProps.Position.CenterLeft -> Gravity.CENTER_VERTICAL or Gravity.START
+                PopupProps.Position.CenterRight -> Gravity.CENTER_VERTICAL or Gravity.END
             }
             // the classic 20 px margin from the screen edge (was the full-screen overlay's padding);
             // with a centred axis x/y are an offset from the centre, so that axis stays 0
             val margin = if (popup.position == PopupProps.Position.Center) 0 else SCREEN_MARGIN_PX
             val centredX = popup.position == PopupProps.Position.TopCenter ||
                 popup.position == PopupProps.Position.BottomCenter
+            val centredY = popup.position == PopupProps.Position.CenterLeft ||
+                popup.position == PopupProps.Position.CenterRight
             x = if (centredX) 0 else margin
-            y = margin
+            y = if (centredY) 0 else margin
             title = "pipup-${key.ifEmpty { "popup" }}"
         }
     }
