@@ -109,8 +109,81 @@ object UpdateManager {
         private set
 
     /// Set by the service; called (on a background thread) when the installer asks for
-    /// on-screen confirmation, so the service can announce it as a popup.
+    /// on-screen confirmation. Since 0.26.1 the service answers by taking its popups down
+    /// and launching the dialog from a foreground Activity (see [confirmLaunchState]).
     @Volatile var onPendingUserAction: (() -> Unit)? = null
+
+    /// Set by the service; called (on a background thread) with the error text when the
+    /// installer reports a failure, so the TV can show it instead of going quiet (#41).
+    @Volatile var onInstallFailed: ((String) -> Unit)? = null
+
+    // ── Confirmation-launch diagnostics (0.26.1, #41) ───────────────────────────────
+    // On a Xiaomi projector (Android 6, MIUI installer) the confirmation was cancelled by
+    // the system before it drew anything: `INSTALL_CANCELED_BY_USER`. Whether that is the
+    // platform refusing (result within milliseconds) or someone pressing cancel (seconds)
+    // is invisible from the status alone, so /state.update.confirmLaunch records what
+    // triggered the launch, which path it took, the Activity result and the time to the
+    // installer's verdict.
+    @Volatile var confirmTrigger: String? = null
+    @Volatile var confirmLaunchPath: String? = null
+        private set
+    @Volatile private var confirmLaunchedAt: Long = 0L
+    @Volatile var confirmActivityResult: String? = null
+        private set
+    @Volatile var confirmResult: String? = null
+        private set
+    @Volatile var confirmResultMs: Long? = null
+        private set
+
+    fun noteConfirmLaunched(path: String) {
+        confirmLaunchPath = path
+        confirmLaunchedAt = android.os.SystemClock.elapsedRealtime()
+        confirmActivityResult = null
+        confirmResult = "pending"
+        confirmResultMs = null
+    }
+
+    fun noteConfirmLaunchFailed(path: String, why: String?) {
+        confirmLaunchPath = path
+        confirmLaunchedAt = 0L
+        confirmResult = "launch failed: ${why ?: "unknown"}"
+        confirmResultMs = null
+    }
+
+    /// Result of the confirmation Activity itself (RESULT_OK = -1, RESULT_CANCELED = 0);
+    /// the installer's own verdict follows separately through the status receiver.
+    fun noteConfirmActivityResult(resultCode: Int) {
+        val ms = confirmLaunchedAt.takeIf { it != 0L }
+            ?.let { android.os.SystemClock.elapsedRealtime() - it }
+        confirmActivityResult = (if (resultCode == -1) "OK" else "CANCELED($resultCode)") +
+            (ms?.let { " after $it ms" } ?: "")
+    }
+
+    private fun noteConfirmOutcome(outcome: String) {
+        if (confirmLaunchedAt != 0L) {
+            confirmResultMs = android.os.SystemClock.elapsedRealtime() - confirmLaunchedAt
+        }
+        confirmResult = outcome
+    }
+
+    private fun resetConfirmDiagnostics() {
+        confirmLaunchPath = null
+        confirmLaunchedAt = 0L
+        confirmActivityResult = null
+        confirmResult = null
+        confirmResultMs = null
+    }
+
+    /// `null` until a confirmation has been launched in this process.
+    fun confirmLaunchState(): Map<String, Any?>? = confirmLaunchPath?.let {
+        mapOf(
+            "trigger" to confirmTrigger,
+            "path" to it,
+            "activityResult" to confirmActivityResult,
+            "result" to confirmResult,
+            "resultMs" to confirmResultMs
+        )
+    }
 
     fun clearPendingConfirm() {
         pendingConfirm = null
@@ -481,21 +554,24 @@ object UpdateManager {
                     )) {
                         PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                             // Pre-Android-12 (and whenever the system insists): the user
-                            // has to confirm on the TV. Launching the dialog blind from
-                            // this receiver made it flash and vanish (TCL, Android 11) -
-                            // so keep the intent and let the service offer it as a popup
-                            // with a button; we still try the direct launch as a bonus.
+                            // has to confirm on the TV. 0.26.1 (#41): no blind launch from
+                            // this receiver any more. Started from here the dialog flashed
+                            // and vanished on a TCL (Android 11), and on a Xiaomi projector
+                            // (Android 6, MIUI installer) the system cancelled it before it
+                            // drew: INSTALL_CANCELED_BY_USER. In both cases this app's own
+                            // overlay was still on screen and the caller had no visible
+                            // window. The service takes every popup down and launches the
+                            // dialog from MainActivity (startActivityForResult) instead.
                             @Suppress("DEPRECATION")
                             val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                            confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             pendingConfirm = confirm
-                            runCatching { ctx.startActivity(confirm) }
-                                .onFailure { Log.e(LOG_TAG, "Cannot show install prompt", it) }
+                            resetConfirmDiagnostics()
                             runCatching { onPendingUserAction?.invoke() }
                             // Keep `installing` set: the flow is still in progress.
                         }
                         PackageInstaller.STATUS_SUCCESS -> {
                             Log.i(LOG_TAG, "Update installed")
+                            noteConfirmOutcome("installed")
                             clearPendingSession()
                             pendingConfirm = null
                             installStartedAt.set(0)
@@ -505,10 +581,12 @@ object UpdateManager {
                             val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                             lastError = "install status $status: $msg"
                             Log.w(LOG_TAG, lastError!!)
+                            noteConfirmOutcome("failed: status $status: $msg")
                             clearPendingSession()
                             pendingConfirm = null
                             installStartedAt.set(0)
                             resetProgress()
+                            runCatching { onInstallFailed?.invoke(lastError!!) }
                         }
                     }
                 }

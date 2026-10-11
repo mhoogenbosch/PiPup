@@ -30,6 +30,7 @@
     <string name="update_confirm_title">PiPup %1$s is ready to install</string>
     <string name="update_confirm_message">Press OK to open the system\'s install confirmation.</string>
     <string name="update_done_title">PiPup updated to %1$s</string>
+    <string name="update_failed_title">PiPup update failed</string>
     <string name="permission_install_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
     <string name="status_ha_pipup_ok">ha-pipup %1$s ✓ up to date</string>
     <string name="status_ha_pipup_behind">ha-pipup %1$s — update available: %2$s</string>

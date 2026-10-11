@@ -9,6 +9,25 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.26.1] — 2026-10-11 (install confirmation from the foreground)
+### Fixed
+- **The install confirmation is launched from a foreground Activity, with every popup off the
+  screen first** (#41). On a Xiaomi projector (Android 6, MIUI installer) the system cancelled the
+  confirmation before it drew anything — `INSTALL_CANCELED_BY_USER`, a MIUI error — and on a TCL
+  (Android 11) it used to flash and vanish. Both times the dialog was started from a service or
+  receiver while PiPup's own "Installing…" overlay was still up: MIUI refuses installs while a
+  floating window is shown, and stock Android's installer ignores taps under one. Now the service
+  takes every PiPup popup down, opens `MainActivity` with `ACTION_CONFIRM_INSTALL`, and the
+  Activity starts the dialog with `startActivityForResult` and closes again when it returns. The
+  direct start from the service remains as fallback; the confirm popup with a button only when
+  even that fails. `POST /update` while a confirmation is pending relaunches it the same way.
+- **A failed install is said on the TV**: "PiPup update failed" with the installer's message, for
+  20 s, instead of only `update.error` in `/state`.
+### Added
+- `/state.update.confirmLaunch` (`trigger` auto/button/post-update, `path` foreground-activity/service,
+  `activityResult`, `result`, `resultMs`): whether the dialog was refused by the system (verdict
+  within milliseconds) or cancelled by a person (seconds), diagnosable without adb.
+
 ## [v0.26.0] — 2026-10-11 (center left / center right)
 ### Added
 - **`position` 7 = CenterLeft and 8 = CenterRight** (#62, requested by @bboykaos) — the 3×3 grid is

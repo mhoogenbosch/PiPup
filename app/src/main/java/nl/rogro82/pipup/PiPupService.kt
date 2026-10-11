@@ -143,12 +143,16 @@ class PiPupService : Service(), WebServer.Handler {
             addAction(Intent.ACTION_DREAMING_STOPPED)
         })
 
-        // Android < 12: the installer wants an on-screen confirmation. Launched blind
-        // from the background that dialog flashes and vanishes; announced as a popup
-        // with a button it works, because the button press gives this app a visible
-        // window and an activity started from one keeps focus.
+        // Android < 12: the installer wants an on-screen confirmation. See
+        // launchInstallConfirmation() for why it is launched the way it is (0.26.1, #41).
         UpdateManager.onPendingUserAction = {
-            mHandler.post { showConfirmInstallPopup() }
+            UpdateManager.confirmTrigger = "auto"
+            mHandler.post { launchInstallConfirmation() }
+        }
+        // A failed install used to leave the TV silent; the error already sits in
+        // /state.update.error, now it is also said on screen (0.26.1).
+        UpdateManager.onInstallFailed = { error ->
+            mHandler.post { showInstallFailedPopup(error) }
         }
 
         maybeAnnounceInstalledUpdate()
@@ -240,6 +244,7 @@ class PiPupService : Service(), WebServer.Handler {
         runCatching { mHandler.removeCallbacksAndMessages(null) }
         runCatching { mRequestHandler.removeCallbacksAndMessages(null) }
         runCatching { UpdateManager.onPendingUserAction = null }
+        runCatching { UpdateManager.onInstallFailed = null }
         runCatching { SoundPlayer.stop(this) }
         super.onDestroy()
 
@@ -479,8 +484,10 @@ class PiPupService : Service(), WebServer.Handler {
         return true
     }
 
-    private fun removeAllPopups(reason: String = "cancelled") {
-        mShown.keys.toList().forEach { removePopup(it, reason) }
+    /// `keepPendingInstall`: taking the confirm popup down must not count as "the user
+    /// never confirmed" when it is the install confirmation itself that needs the screen.
+    private fun removeAllPopups(reason: String = "cancelled", keepPendingInstall: Boolean = false) {
+        mShown.keys.toList().forEach { removePopup(it, reason, byButton = keepPendingInstall) }
     }
 
     private fun destroyView(view: PopupView) {
@@ -637,9 +644,69 @@ class PiPupService : Service(), WebServer.Handler {
         )
     }
 
+    /// Launches the system's install confirmation (Android < 12) the way the installer
+    /// expects it (0.26.1, #41). Two things are different from the old blind launch:
+    ///
+    /// 1. Every PiPup popup is taken off the screen first. MIUI's installer refuses an
+    ///    install while a floating window is up (its INSTALL_CANCELED_BY_USER on a Xiaomi
+    ///    projector, Android 6), and stock Android's installer ignores taps under an overlay
+    ///    (filterTouchesWhenObscured) - the likely reason the dialog "flashed and vanished"
+    ///    on a TCL (Android 11) as well.
+    /// 2. The dialog is started from MainActivity with startActivityForResult, so it has a
+    ///    visible foreground caller, and the Activity result lands in
+    ///    /state.update.confirmLaunch next to the installer's own verdict. The direct start
+    ///    from this service remains as fallback when the Activity cannot be started; if even
+    ///    that fails the old confirm popup with a button is offered.
+    private fun launchInstallConfirmation() {
+        val trigger = UpdateManager.confirmTrigger ?: "unknown"
+        val confirm = UpdateManager.pendingConfirm ?: run {
+            Log.w(LOG_TAG, "Install confirmation ($trigger): nothing pending")
+            return
+        }
+        PowerController.wake(this)
+        removeAllPopups(reason = "install_confirm", keepPendingInstall = true)
+        val viaActivity = runCatching {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .setAction(ACTION_CONFIRM_INSTALL)
+                    .addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    )
+            )
+        }.onFailure {
+            Log.e(LOG_TAG, "Cannot start MainActivity for the install confirmation", it)
+        }.isSuccess
+        if (viaActivity) {
+            Log.i(LOG_TAG, "Install confirmation ($trigger): handed to MainActivity")
+            return
+        }
+        runCatching { startActivity(Intent(confirm).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onSuccess { UpdateManager.noteConfirmLaunched("service") }
+            .onFailure {
+                Log.e(LOG_TAG, "Cannot show install prompt", it)
+                UpdateManager.noteConfirmLaunchFailed("service", it.message)
+                showConfirmInstallPopup()
+            }
+    }
+
+    /// "PiPup update failed: <reason>" for 20 s, so a refused install is seen on the TV
+    /// and not only in /state (0.26.1).
+    private fun showInstallFailedPopup(error: String) {
+        createPopup(
+            PopupProps(
+                duration = 20,
+                id = UPDATE_POPUP_ID,
+                position = PopupProps.Position.BottomRight,
+                title = getString(R.string.update_failed_title),
+                message = error
+            )
+        )
+    }
+
     /// Popup with a button that (re)launches the system's install confirmation
-    /// (Android < 12). Repeatable: POST /update while a confirmation is pending shows
-    /// it again instead of answering "already running".
+    /// (Android < 12). Since 0.26.1 only the fallback when the dialog could not be
+    /// started at all; the button goes through launchInstallConfirmation().
     private fun showConfirmInstallPopup() {
         val version = UpdateManager.latestVersion ?: return
         // Wake the screen: the confirmation is worthless on a sleeping TV (the system
@@ -831,12 +898,8 @@ class PiPupService : Service(), WebServer.Handler {
                     }
                 }.start()
             } else if (shown.id == CONFIRM_POPUP_ID) {
-                // Started from a button press = this app has a visible window,
-                // so the system dialog launches reliably and keeps focus.
-                UpdateManager.pendingConfirm?.let { confirm ->
-                    runCatching { startActivity(confirm) }
-                        .onFailure { Log.e(LOG_TAG, "Cannot show install prompt", it) }
-                }
+                UpdateManager.confirmTrigger = "button"
+                mHandler.post { launchInstallConfirmation() }
             } else {
                 sendButtonCallback(shown, btn)
             }
@@ -1110,7 +1173,10 @@ class PiPupService : Service(), WebServer.Handler {
                 ?.let { (System.currentTimeMillis() - it) / 1000 },
             "error" to UpdateManager.lastError,
             // which trust store updater connections use; "unbuilt" until the first check
-            "tlsFactory" to UpdateManager.tlsFactoryKind
+            "tlsFactory" to UpdateManager.tlsFactoryKind,
+            // 0.26.1 (#41): how the last install confirmation was launched and how it ended
+            // (trigger, path, activityResult, result, resultMs); null until one was launched
+            "confirmLaunch" to UpdateManager.confirmLaunchState()
         )
         state["haPipup"] = mapOf(
             // recommended = the latest ha-pipup release on GitHub, fetched with the
@@ -1331,10 +1397,11 @@ class PiPupService : Service(), WebServer.Handler {
                             // web-server thread; progress is visible in /state.
                             if (UpdateManager.pendingConfirm != null) {
                                 // A previous attempt is waiting for the on-screen
-                                // confirmation (Android < 12): re-offer it instead of
+                                // confirmation (Android < 12): launch it again instead of
                                 // answering "already running".
-                                mHandler.post { showConfirmInstallPopup() }
-                                OK("waiting for on-screen confirmation; popup shown again")
+                                UpdateManager.confirmTrigger = "post-update"
+                                mHandler.post { launchInstallConfirmation() }
+                                OK("waiting for on-screen confirmation; launched again")
                             } else {
                                 Thread {
                                     // Always re-check first. `updateAvailable` compares the
@@ -1575,6 +1642,8 @@ class PiPupService : Service(), WebServer.Handler {
         const val PREF_UPDATE_SOURCE = "update_source"
         const val UPDATE_POPUP_ID = "pipup-update"
         const val CONFIRM_POPUP_ID = "pipup-update-confirm"
+        /// MainActivity intent action: launch the pending install confirmation (0.26.1).
+        const val ACTION_CONFIRM_INSTALL = "nl.rogro82.pipup.action.CONFIRM_INSTALL"
         const val PREF_LAST_RUN_VERSION = "last_run_version"
         // First check shortly after boot (network is usually up by then), then twice a day.
         // GitHub's anonymous API allows 60 requests/hour per IP; this is nowhere near it.

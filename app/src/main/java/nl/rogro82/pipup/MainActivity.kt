@@ -77,6 +77,52 @@ class MainActivity : Activity() {
         } else {
             startService(serviceIntent)
         }
+
+        handleConfirmInstall(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleConfirmInstall(intent)
+    }
+
+    /// Opened only to launch the pending install confirmation; closes again afterwards.
+    private var mConfirmOnly = false
+
+    /// 0.26.1 (#41): the service opens this Activity to give the system's install
+    /// confirmation a visible, foreground caller - started from a service or receiver it
+    /// vanished (TCL, Android 11) or was cancelled by the system before it drew (Xiaomi,
+    /// Android 6, MIUI installer). startActivityForResult also returns the dialog's own
+    /// result, which lands in /state.update.confirmLaunch next to the installer's verdict.
+    /// No FLAG_ACTIVITY_NEW_TASK on the confirm intent: that would make the result arrive
+    /// immediately as CANCELED instead of when the dialog closes.
+    private fun handleConfirmInstall(intent: Intent?) {
+        if (intent?.action != PiPupService.ACTION_CONFIRM_INSTALL) return
+        val confirm = UpdateManager.pendingConfirm
+        if (confirm == null) {
+            android.util.Log.w(LOG_TAG, "Install confirmation requested but nothing is pending")
+            return
+        }
+        mConfirmOnly = true
+        try {
+            startActivityForResult(Intent(confirm), REQ_INSTALL_CONFIRM)
+            UpdateManager.noteConfirmLaunched("foreground-activity")
+        } catch (ex: Throwable) {
+            android.util.Log.e(LOG_TAG, "Cannot show install prompt from MainActivity", ex)
+            UpdateManager.noteConfirmLaunchFailed("foreground-activity", ex.message)
+            finish()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_INSTALL_CONFIRM) return
+        UpdateManager.noteConfirmActivityResult(resultCode)
+        android.util.Log.i(LOG_TAG, "Install confirmation closed: ${UpdateManager.confirmActivityResult}")
+        // Back to whatever the TV was showing; the installer finishes (or reports) on its own.
+        if (mConfirmOnly) finish()
     }
 
     override fun onResume() {
@@ -316,5 +362,7 @@ class MainActivity : Activity() {
 
     companion object {
         const val REFRESH_INTERVAL_MS = 2000L
+        private const val LOG_TAG = "PiPup"
+        private const val REQ_INSTALL_CONFIRM = 4101
     }
 }
