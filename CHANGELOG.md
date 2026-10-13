@@ -8,6 +8,10 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+### Docs
+- Readme: "Keep the camera's keyframes under the TV's UDP buffer" — WebRTC keyframes above ~220 KB
+  never decode on a box with a 256 KB `rmem_max` (Nokia 8010): the poster stays. How to measure (ffprobe
+  `pkt_size` of key frames), what was measured, and that halving the bitrate does not halve the keyframe.
 
 ## [v0.26.1] — 2026-10-11 (install confirmation from the foreground)
 ### Fixed

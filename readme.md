@@ -201,6 +201,32 @@ records from is always running, so its answer comes in ~0.3 s. A separate "no au
 needed: with `muted` (the default) the app asks for video only. Check with go2rtc's `/api/streams`: a
 stream with consumers is warm.
 
+### Keep the camera's keyframes under the TV's UDP buffer
+
+WebRTC sends each keyframe as one burst of UDP packets, and the TV's kernel has to hold that whole
+burst in the socket's receive buffer until Chromium reads it. On some Android TV boxes that buffer is
+small: a Nokia Streaming Box 8010 (Android 14, wired) caps it at **256 KB** (`/proc/sys/net/core/rmem_max`),
+and nothing an app can do raises it. A keyframe larger than that arrives with holes, WebRTC never gets
+a decodable frame, and the popup sits on its poster forever while the kernel counts the loss
+(`cat /proc/net/snmp | grep Udp` → `RcvbufErrors` climbing; logcat shows `video_receive_stream2.cc:
+No decodable frame … requesting keyframe` every 200 ms and `PacketBuffer is already at max size`).
+A Fire TV on Wi-Fi played the same streams; the symptom is per device.
+
+Measure your cameras' keyframes and keep them around **≤ 220 KB**:
+
+```sh
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 -read_intervals %+4 \
+  -show_entries frame=key_frame,pkt_size -of csv=p=0 rtsp://<go2rtc>:8554/<cam> | grep ^1,
+```
+
+Measured here (all H.264 High, 10 fps, 1 s keyframe interval): 3 Mbit/s at 2880×1616 → 225–238 KB
+(played); 5 Mbit/s at 2560×1920 → 340 KB and 6 Mbit/s at 2560×1440/1920 → 420–535 KB (poster only).
+The fix was the camera's main-stream bitrate: 2560×1920 at 3 Mbit/s → 218 KB, 2560×1440 and the
+doorbell at 2 Mbit/s → ~215–225 KB. Note that halving the bitrate does not halve the keyframe (the
+encoder spends relatively more on I-frames when P-frames get cheap), so measure after each step. The
+alternative is a smaller stream for that TV only (the camera's sub-stream), at the cost of a softer
+picture and, for a stream nobody else pulls, the cold-start delay above.
+
 ### The poster hand-over
 
 The poster (since 0.17.0) makes start-up time matter much less: a still of the same camera shows
