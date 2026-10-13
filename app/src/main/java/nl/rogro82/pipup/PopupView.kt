@@ -455,7 +455,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 addListener(object : Player.Listener {
                     override fun onVideoSizeChanged(videoSize: VideoSize) {
                         if (videoSize.width > 0 && videoSize.height > 0) {
-                            sizeTo(media.width, (media.width.toLong() * videoSize.height / videoSize.width).toInt())
+                            sizeTo(media.width, heightForDisplayAspect(
+                                media.width, videoSize.width, videoSize.height, videoSize.pixelWidthHeightRatio))
                         }
                     }
                     override fun onRenderedFirstFrame() {
@@ -956,4 +957,13 @@ video{width:100%;height:100%;object-fit:contain;background:__BG__}</style></head
             }
         }
     }
+}
+/// Popup video height for [targetWidth] that keeps the stream's *display* aspect.
+/// Stored width/height alone is the wrong shape for anamorphic streams: NVR substreams
+/// commonly send 640x360 or 704x480 with a non-square sample aspect (e.g. 3:4 for a 4:3
+/// picture), which media3 reports as [pixelWidthHeightRatio]. Ignoring it squashes the image.
+internal fun heightForDisplayAspect(targetWidth: Int, width: Int, height: Int, pixelWidthHeightRatio: Float): Int {
+    val ratio = if (pixelWidthHeightRatio > 0f) pixelWidthHeightRatio else 1f
+    val displayWidth = width * ratio
+    return Math.round(targetWidth * height / displayWidth)
 }
