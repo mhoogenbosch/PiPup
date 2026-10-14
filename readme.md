@@ -634,6 +634,17 @@ next to the icon, and the `media` image (if any) stays below.
   popup in place, keeping its place in the stack.
 - `bringToFront` (since 0.24.0, default `false`): a redraw of a popup already on screen opens it on
   top of the others instead of in its old place.
+- `stack` (since 0.27.0, default none): `"vertical"` or `"horizontal"` lines the popup up with the
+  other stacking popups at the **same position** instead of drawing it over them.
+  - The first popup keeps the usual place. Each next one goes right after the previous one, with a
+    12 px gap. Vertical moves away from the top/bottom edge, horizontal away from the left/right
+    edge. On a centred axis the stack continues downwards (`center_left`/`center_right`) or to the
+    right (`top_center`/`bottom_center`).
+  - When a popup closes, the rest move up into the gap. When one changes size (a video popup grows
+    as its first frame arrives), the stack is laid out again.
+  - Popups without `stack` keep their fixed place and may overlap the stack. `center` never stacks.
+  - The stack is not limited to the screen: keep media small when many popups can be up at once.
+  - Requested in [#64](https://github.com/mhoogenbosch/PiPup/issues/64).
 
 #### multipart/form-data (uploaded image file)
 

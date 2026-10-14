@@ -8,6 +8,18 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+### Added
+- **Popup stacking: `stack: "vertical"` or `"horizontal"`** (#64). A popup lines up with the other
+  stacking popups at the same position instead of drawing over them. Vertical moves away from the
+  top/bottom edge, horizontal away from the left/right edge; on a centred axis the stack continues
+  downwards or to the right. The first popup keeps the classic place, the next ones follow with a
+  12 px gap. The stack closes up when a popup goes away and is laid out again when one changes size
+  (a video popup growing on its first frame). Opt-in per popup; `center` never stacks. `/state`
+  echoes it as `lastPopup.stack`. Requested by @bboykaos.
+### Fixed
+- **Video popups keep the stream's display aspect** (#67). The box was sized from the stored
+  width/height and ignored the pixel aspect ratio, so anamorphic NVR substreams (e.g. 640×360 meant
+  as 4:3) showed squashed. Square-pixel streams are unchanged. Contributed by @pelkiegr.
 ### Docs
 - Readme: "Keep the camera's keyframes under the TV's UDP buffer" — WebRTC keyframes above ~220 KB
   never decode on a box with a 256 KB `rmem_max` (Nokia 8010): the poster stays. How to measure (ffprobe

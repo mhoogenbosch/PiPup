@@ -481,6 +481,8 @@ class PiPupService : Service(), WebServer.Handler {
         // state already said it was gone (the "popup stays on TV" reports)
         destroyView(removed.view)
         removeWindow(removed.window)
+        // the popups stacked after this one close the gap
+        if (removed.props.stackAxis != null) relayoutStacks()
         return true
     }
 
@@ -875,6 +877,62 @@ class PiPupService : Service(), WebServer.Handler {
         }
     }
 
+    /// Whether [position] is centred on the stack's own axis (offset measured from the centre).
+    private fun centredOn(position: PopupProps.Position, axis: PopupProps.StackAxis): Boolean =
+        when (axis) {
+            PopupProps.StackAxis.Vertical -> position == PopupProps.Position.CenterLeft ||
+                position == PopupProps.Position.CenterRight
+            PopupProps.StackAxis.Horizontal -> position == PopupProps.Position.TopCenter ||
+                position == PopupProps.Position.BottomCenter
+        }
+
+    private fun Shown.sizeAlong(axis: PopupProps.StackAxis): Int =
+        if (axis == PopupProps.StackAxis.Vertical) window.height else window.width
+
+    /// Stacks (0.27.0, #64) of the popups on screen: per position and axis, in stack order.
+    private fun stackGroups(): Map<Pair<PopupProps.Position, PopupProps.StackAxis>, List<Shown>> =
+        mShown.values.filter { it.props.stackAxis != null }
+            .groupBy { it.props.position to it.props.stackAxis!! }
+
+    /// Puts the offset for [popup] in slot [key] into [params] before its window is added or
+    /// redrawn, so a new popup opens in its place in the stack instead of on top of the
+    /// first one. A size that is not known yet counts as 0; the layout listener corrects it.
+    private fun applyStackOffset(params: WindowManager.LayoutParams, popup: PopupProps, key: String) {
+        val axis = popup.stackAxis ?: return
+        fun sameStack(e: Shown) = e.key != key && e.props.position == popup.position && e.props.stackAxis == axis
+        val others = mShown.values.filter(::sameStack)
+        // a redraw in place keeps its place in the stack; a new window (or bringToFront) goes last
+        val inPlace = mShown[key]?.takeIf { !popup.bringToFront }
+        val index = if (inPlace != null) mShown.values.takeWhile { it.key != key }.count(::sameStack)
+                    else others.size
+        val sizes = others.map { it.sizeAlong(axis) }.toMutableList()
+        sizes.add(index, inPlace?.sizeAlong(axis) ?: 0)
+        val offset = StackLayout.offsets(sizes, centredOn(popup.position, axis), SCREEN_MARGIN_PX, STACK_GAP_PX)[index]
+        if (axis == PopupProps.StackAxis.Vertical) params.y = offset else params.x = offset
+    }
+
+    /// Moves every stacking popup to its place: after a popup is added, redrawn or removed,
+    /// and whenever one changes size (a video popup grows when its first frame arrives).
+    private fun relayoutStacks() {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        for ((group, entries) in stackGroups()) {
+            val (position, axis) = group
+            val offsets = StackLayout.offsets(entries.map { it.sizeAlong(axis) },
+                centredOn(position, axis), SCREEN_MARGIN_PX, STACK_GAP_PX)
+            entries.forEachIndexed { i, entry ->
+                val lp = entry.window.layoutParams as? WindowManager.LayoutParams ?: return@forEachIndexed
+                val vertical = axis == PopupProps.StackAxis.Vertical
+                if ((if (vertical) lp.y else lp.x) == offsets[i]) return@forEachIndexed
+                if (vertical) lp.y = offsets[i] else lp.x = offsets[i]
+                try {
+                    wm.updateViewLayout(entry.window, lp)
+                } catch (ex: Throwable) {
+                    Log.e(LOG_TAG, "Stack relayout of ${entry.key.ifEmpty { "(no id)" }} failed: ${ex.message}")
+                }
+            }
+        }
+    }
+
     /// Build the view of [popup] and wire its callbacks to slot [key].
     private fun buildView(popup: PopupProps, key: String): PopupView {
         val view = PopupView.build(this, popup)
@@ -970,6 +1028,7 @@ class PiPupService : Service(), WebServer.Handler {
 
             val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val params = windowParams(popup, key)
+            applyStackOffset(params, popup, key)
             val view = buildView(popup, key)
             val now = SystemClock.elapsedRealtime()
 
@@ -1011,11 +1070,16 @@ class PiPupService : Service(), WebServer.Handler {
                     }
                 }
                 window.addView(view, contentParams())
+                // a stacked popup that changes size moves the ones after it
+                window.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
+                    if (r - l != oldR - oldL || b - t != oldB - oldT) mHandler.post { relayoutStacks() }
+                }
                 wm.addView(window, params)
                 entry = Shown(key, window, view, popup, now)
                 mShown[key] = entry
             }
             publishShown()
+            relayoutStacks()
             mPopupsShown.incrementAndGet()
 
             if (popup.buttons.isNotEmpty()) {
@@ -1199,6 +1263,7 @@ class PiPupService : Service(), WebServer.Handler {
                 "tts" to !last.tts.isNullOrBlank(),
                 "sound" to !last.sound.isNullOrBlank(),
                 "animation" to last.animation,
+                "stack" to last.stackAxis?.name?.lowercase(),
                 "buttons" to last.buttons.size,
                 // time to first rendered frame (video/web); null while not yet painted or n/a
                 "firstFrameMs" to mLastFirstFrameMs,
@@ -1596,7 +1661,8 @@ class PiPupService : Service(), WebServer.Handler {
                                             padding = params["padding"]?.toIntOrNull(),
                                             sound = params["sound"],
                                             soundVolume = params["soundVolume"]?.toFloatOrNull(),
-                                            bringToFront = params["bringToFront"]?.toBoolean() ?: false
+                                            bringToFront = params["bringToFront"]?.toBoolean() ?: false,
+                                            stack = params["stack"]
                                         )
                                     }
                                     else -> throw Exception("invalid content-type")
@@ -1667,6 +1733,8 @@ class PiPupService : Service(), WebServer.Handler {
         const val MAIN_SYNC_TIMEOUT_MS = 2_000L
         // gap between a popup and the screen edge
         const val SCREEN_MARGIN_PX = 20
+        /// space between two stacked popups (0.27.0)
+        const val STACK_GAP_PX = 12
 
         fun OK(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "text/plain", message)
         fun InvalidRequest(message: String? = null): NanoHTTPD.Response = newFixedLengthResponse(NanoHTTPD.Response.Status.BAD_REQUEST, "text/plain", "invalid request: $message")

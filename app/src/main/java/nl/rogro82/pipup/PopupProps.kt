@@ -54,10 +54,25 @@ data class PopupProps(
     val opacity: Float? = null,
     // 0.24.0: a redraw of a popup already on screen (same id, new content) normally keeps
     // its place in the stack; true opens it on top of the other popups instead.
-    val bringToFront: Boolean = false
+    val bringToFront: Boolean = false,
+    // 0.27.0 (#64): line up with the other stacking popups at the same position instead of
+    // overlapping them: "vertical" (away from the top/bottom edge; down from the centre for
+    // center_left/right) or "horizontal" (away from the left/right edge; rightwards from the
+    // centre for top/bottom_center). null/"none" = the fixed position (classic). Center never stacks.
+    val stack: String? = null
 ) {
     val indefinite: Boolean
         get() = duration <= 0
+
+    /// Stack axis, or null when this popup keeps its fixed position.
+    val stackAxis: StackAxis?
+        get() = when (stack?.lowercase()) {
+            "vertical" -> StackAxis.Vertical
+            "horizontal" -> StackAxis.Horizontal
+            else -> null
+        }?.takeIf { position != Position.Center }
+
+    enum class StackAxis { Vertical, Horizontal }
 
     /// equal except for duration, tts, sound, stacking and callback: safe to keep the existing
     /// view and only reschedule removal. `callback` is left out (2026-10-08) because the HA
