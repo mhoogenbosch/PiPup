@@ -8,6 +8,8 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+
+## [v0.27.0] — 2026-10-14 (popup stacking)
 ### Added
 - **Popup stacking: `stack: "vertical"` or `"horizontal"`** (#64). A popup lines up with the other
   stacking popups at the same position instead of drawing over them. Vertical moves away from the
