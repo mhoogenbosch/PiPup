@@ -8,6 +8,8 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+
+## [v0.30.0] — 2026-10-31 (WHEP behind basic authentication)
 ### Added
 - **WHEP behind basic authentication**: credentials in `media.whep.uri`
   (`http://user:password@host:1984/api/webrtc?src=...`) are sent as an `Authorization: Basic` header,
