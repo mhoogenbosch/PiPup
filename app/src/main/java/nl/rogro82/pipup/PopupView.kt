@@ -802,7 +802,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 }
                 setBackgroundColor(if (media.transparent) Color.TRANSPARENT else Color.BLACK)
                 val origin = try {
-                    val u = android.net.Uri.parse(media.uri)
+                    val u = android.net.Uri.parse(splitUrlCredentials(media.uri).first)
                     "${u.scheme}://${u.encodedAuthority}/"
                 } catch (_: Throwable) { null }
                 loadDataWithBaseURL(origin, whepPage(media), "text/html", "utf-8", null)
@@ -880,7 +880,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 }
                 setBackgroundColor(Color.BLACK)
                 val origin = try {
-                    val u = android.net.Uri.parse(media.tiles.first().uri)
+                    val u = android.net.Uri.parse(splitUrlCredentials(media.tiles.first().uri).first)
                     "${u.scheme}://${u.encodedAuthority}/"
                 } catch (_: Throwable) { null }
                 loadDataWithBaseURL(origin, gridPage(media), "text/html", "utf-8", null)
@@ -917,20 +917,28 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         const val LOG_TAG = "PopupView"
 
         /// The WHEP player page. The endpoint URL goes in as a JSON string literal
-        /// (JSONObject.quote), never spliced raw into the script.
-        fun whepPage(media: PopupProps.Media.Whep): String =
-            WHEP_PAGE
-                .replace("__URL__", org.json.JSONObject.quote(media.uri))
+        /// (JSONObject.quote), never spliced raw into the script. Credentials in the URL
+        /// (http://user:pass@host:1984/...) are split off and sent as a Basic Authorization
+        /// header, because fetch() refuses a URL that carries them.
+        fun whepPage(media: PopupProps.Media.Whep): String {
+            val (url, credentials) = splitUrlCredentials(media.uri)
+            return WHEP_PAGE
+                .replace("__URL__", org.json.JSONObject.quote(url))
+                .replace("__CREDENTIALS__", credentials?.let { org.json.JSONObject.quote(it) } ?: "null")
                 .replace("__MUTED__", if (media.muted) "true" else "false")
                 .replace("__BG__", if (media.transparent) "transparent" else "#000")
+        }
 
         /// The camera-wall page (0.29.0). The tiles go in as one JSON array (JSONArray
-        /// quoting), never spliced raw into the script.
+        /// quoting), never spliced raw into the script. Credentials in a tile's URL are sent
+        /// as a Basic Authorization header, as in [whepPage].
         fun gridPage(media: PopupProps.Media.Grid): String {
             val tiles = org.json.JSONArray()
             media.tiles.forEach { t ->
+                val (url, credentials) = splitUrlCredentials(t.uri)
                 tiles.put(org.json.JSONObject().apply {
-                    put("uri", t.uri)
+                    put("uri", url)
+                    put("credentials", credentials ?: org.json.JSONObject.NULL)
                     put("label", if (media.labels) (t.label ?: "") else "")
                     put("poster", t.poster ?: "")
                 })
@@ -962,6 +970,7 @@ font:500 15px sans-serif;color:#fff;background:rgba(0,0,0,.55)}
   var stopped = false, anyPlaying = false, stops = [];
   var T0 = Date.now(); function lg(m){ console.log('whep grid +' + (Date.now() - T0) + 'ms ' + m); }
   function title(t){ document.title = 'pipup:' + t; }
+  function basic(c){ var b = new TextEncoder().encode(c), s = ''; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
   window.__pipupStop = function(){ stopped = true; stops.forEach(function(f){ try { f(); } catch(e) {} }); };
   TILES.forEach(function(t, i){
     var box = document.createElement('div'); box.className = 't';
@@ -1011,8 +1020,9 @@ font:500 15px sans-serif;color:#fff;background:rgba(0,0,0,.55)}
       p.createOffer().then(function(o){ return p.setLocalDescription(o); })
         .then(function(){ return gathered(p); })
         .then(function(){
-          return fetch(t.uri, { method: 'POST', headers: { 'Content-Type': 'application/sdp' },
-                                body: p.localDescription.sdp });
+          var headers = { 'Content-Type': 'application/sdp' };
+          if (t.credentials) headers['Authorization'] = 'Basic ' + basic(t.credentials);
+          return fetch(t.uri, { method: 'POST', headers: headers, body: p.localDescription.sdp });
         })
         .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
         .then(function(sdp){ if (p !== pc) return; return p.setRemoteDescription({ type: 'answer', sdp: sdp }); })
@@ -1032,11 +1042,12 @@ font:500 15px sans-serif;color:#fff;background:rgba(0,0,0,.55)}
 video{width:100%;height:100%;object-fit:contain;background:__BG__}</style></head>
 <body><video id="v" autoplay playsinline></video><script>
 (function(){
-  var URL_ = __URL__, MUTED = __MUTED__;
+  var URL_ = __URL__, CREDENTIALS = __CREDENTIALS__, MUTED = __MUTED__;
   var v = document.getElementById('v'); v.muted = MUTED;
   var pc = null, stopped = false, attempt = 0, playing = false, timer = null;
   var T0 = Date.now(); function lg(m){ console.log('whep +' + (Date.now() - T0) + 'ms ' + m); }
   function title(t){ document.title = 'pipup:' + t; }
+  function basic(c){ var b = new TextEncoder().encode(c), s = ''; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
   function err(m){ title('error:' + String(m).slice(0, 120)); }
   function retry(){
     if (stopped || timer) return;
@@ -1082,7 +1093,9 @@ video{width:100%;height:100%;object-fit:contain;background:__BG__}</style></head
       .then(function(){ return gathered(p); })
       .then(function(){ lg('gathered ' + p.iceGatheringState); })
       .then(function(){
-        return fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'application/sdp' },
+        var headers = { 'Content-Type': 'application/sdp' };
+        if (CREDENTIALS) headers['Authorization'] = 'Basic ' + basic(CREDENTIALS);
+        return fetch(URL_, { method: 'POST', headers: headers,
                              body: p.localDescription.sdp });
       })
       .then(function(r){
@@ -1216,6 +1229,18 @@ video{width:100%;height:100%;object-fit:contain;background:__BG__}</style></head
         }
     }
 }
+/// Splits credentials off a URL: `http://user:pass@host:1984/api/webrtc?src=x` gives
+/// (`http://host:1984/api/webrtc?src=x`, `user:pass`), percent-decoded so a password can
+/// carry reserved characters. A URL without credentials comes back unchanged, with null.
+internal fun splitUrlCredentials(url: String): Pair<String, String?> {
+    val start = url.indexOf("://").let { if (it < 0) return url to null else it + 3 }
+    val end = url.indexOfAny(charArrayOf('/', '?', '#'), start).let { if (it < 0) url.length else it }
+    val at = url.lastIndexOf('@', end - 1)
+    if (at < start) return url to null
+    val credentials = java.net.URLDecoder.decode(url.substring(start, at).replace("+", "%2B"), "UTF-8")
+    return url.substring(0, start) + url.substring(at + 1) to credentials
+}
+
 /// Popup video height for [targetWidth] that keeps the stream's *display* aspect.
 /// Stored width/height alone is the wrong shape for anamorphic streams: NVR substreams
 /// commonly send 640x360 or 704x480 with a non-square sample aspect (e.g. 3:4 for a 4:3

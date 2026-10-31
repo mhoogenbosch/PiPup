@@ -513,6 +513,13 @@ offer or a dropped connection it retries with backoff (1, 2, 4, then every 8 s).
 `/state.lastPopup.mediaError` holds the last error (for example `HTTP 404` for an unknown stream
 name); with adb, `logcat -s PopupView` shows a timeline per attempt (offer, answer, track, playing).
 
+A WHEP endpoint behind basic authentication (since 0.29.0), such as go2rtc with `api.username` and
+`api.password`, takes the credentials in the URL: `http://user:password@go2rtc:1984/api/webrtc?src=doorbell`.
+The app removes them from the URL and sends them as an `Authorization: Basic` header, because a
+browser refuses a request to a URL that carries credentials. Percent-encode reserved characters in the
+password (`@` as `%40`, `:` as `%3A`). Wrong credentials show as `HTTP 401` in `mediaError`. The tiles of
+a camera wall (`grid`) take credentials the same way.
+
 #### Full-screen popups
 
 Since 0.29.1. `"fullscreen": true` on any popup makes its window cover the whole display, status and

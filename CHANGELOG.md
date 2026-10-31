@@ -8,6 +8,12 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+### Added
+- **WHEP behind basic authentication**: credentials in `media.whep.uri`
+  (`http://user:password@host:1984/api/webrtc?src=...`) are sent as an `Authorization: Basic` header,
+  so a go2rtc with `api.username`/`api.password` works. The same goes for the tiles of a camera wall
+  (`media.grid`). A URL without credentials behaves as before.
+
 ### Docs
 - Readme: Android < 12 TVs update silently from Home Assistant now — ha-pipup 1.29.0 installs over ADB
   itself (also on Home Assistant OS) and 1.30.0 does it automatically at night (#76). `install.sh` stays
