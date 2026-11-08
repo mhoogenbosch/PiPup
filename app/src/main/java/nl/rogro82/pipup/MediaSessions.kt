@@ -71,11 +71,19 @@ object MediaSessions {
     private fun pick(list: List<MediaController>): MediaController? =
         list.firstOrNull { isPlaying(it.playbackState?.state) } ?: list.firstOrNull()
 
-    /// GET /media and /state.media.
-    fun snapshot(context: Context): Map<String, Any?> {
-        val list = controllers(context) ?: return mapOf("access" to false, "reason" to reason(context))
-        val controller = pick(list) ?: return mapOf("access" to true, "package" to null)
-        return mapOf("access" to true) + describe(controller).toMap()
+    /// GET /media and /state.media. Never throws: it is part of every /state and push, and a
+    /// session that dies while it is read (a DeadObjectException) must not take those down.
+    fun snapshot(context: Context): Map<String, Any?> = try {
+        val list = controllers(context)
+        val controller = list?.let { pick(it) }
+        when {
+            list == null -> mapOf("access" to false, "reason" to reason(context))
+            controller == null -> mapOf("access" to true, "package" to null)
+            else -> mapOf("access" to true) + describe(controller).toMap()
+        }
+    } catch (ex: Throwable) {
+        Log.w(LOG_TAG, "reading the media session failed: ${ex.message}")
+        mapOf("access" to true, "package" to null)
     }
 
     private fun describe(controller: MediaController): Snapshot {
@@ -117,7 +125,9 @@ object MediaSessions {
         } else {
             pick(list) ?: return TvControl.Result(false, 404, "nothing is playing")
         }
-        val now = describe(controller)
+        val now = try { describe(controller) } catch (ex: Throwable) {
+            return TvControl.Result(false, 404, "the media session ended: ${ex.message}")
+        }
         if (!now.canSeek) return TvControl.Result(false, 409, "${now.pkg} does not allow seeking")
         val target = seekTarget(now.positionMs, absolute, relative, now.durationMs)
             ?: return TvControl.Result(false, 409, "${now.pkg} reports no position, so by= cannot be used; use ms=")
@@ -141,25 +151,32 @@ object MediaSessions {
         handler.post { startOnMain() }
     }
 
-    private fun startOnMain() {
-        val context = appContext ?: return
-        val list = controllers(context) ?: return
+    // Everything below runs on the main thread, where an exception would end the whole
+    // process (popups included): each entry point catches everything.
+    private fun startOnMain() = guarded("start") {
+        val context = appContext ?: return@guarded
+        val list = controllers(context) ?: return@guarded
         if (!listening) {
-            try {
-                manager(context).addOnActiveSessionsChangedListener(sessionsListener, component(context), handler)
-                listening = true
-                Log.i(LOG_TAG, "tracking media sessions")
-            } catch (ex: Throwable) {
-                Log.w(LOG_TAG, "cannot track media sessions: ${ex.message}")
-                return
-            }
+            manager(context).addOnActiveSessionsChangedListener(sessionsListener, component(context), handler)
+            listening = true
+            Log.i(LOG_TAG, "tracking media sessions")
         }
         track(list)
     }
 
     private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { list ->
-        track(list ?: emptyList())
-        scheduleCheck()
+        guarded("sessions changed") {
+            track(list ?: emptyList())
+            scheduleCheck()
+        }
+    }
+
+    private inline fun guarded(what: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (ex: Throwable) {
+            Log.w(LOG_TAG, "$what failed: ${ex.message}")
+        }
     }
 
     private fun track(list: List<MediaController>) {
@@ -190,12 +207,14 @@ object MediaSessions {
         checkPending = true
         handler.postDelayed({
             checkPending = false
-            val context = appContext ?: return@postDelayed
-            val list = controllers(context) ?: return@postDelayed
-            val now = pick(list)?.let { describe(it) } ?: Snapshot.NONE
-            if (worthPushing(lastPushed, now)) {
-                lastPushed = now
-                runCatching { onChange?.invoke() }
+            guarded("change check") {
+                val context = appContext ?: return@guarded
+                val list = controllers(context) ?: return@guarded
+                val now = pick(list)?.let { describe(it) } ?: Snapshot.NONE
+                if (worthPushing(lastPushed, now)) {
+                    lastPushed = now
+                    onChange?.invoke()
+                }
             }
         }, COALESCE_MS)
     }

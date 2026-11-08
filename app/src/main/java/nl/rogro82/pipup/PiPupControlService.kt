@@ -92,6 +92,15 @@ class PiPupControlService : AccessibilityService() {
                 return TvControl.Result(false, 403, "$pkg is not on the list of apps PiPup may press " +
                     "buttons in (install.sh --click $pkg, or the click option in ha-pipup)")
             }
+            return try {
+                clickLoop(pkg, id, waitSeconds)
+            } catch (ex: Throwable) {
+                Log.w(LOG_TAG, "click $pkg $id failed: ${ex.message}")
+                TvControl.Result(false, 500, "click failed: ${ex.message}")
+            }
+        }
+
+        private fun clickLoop(pkg: String, id: String, waitSeconds: Int): TvControl.Result {
             val deadline = SystemClock.elapsedRealtime() + waitSeconds.coerceIn(0, MAX_WAIT_SECONDS) * 1000L
             var inFront = false
             while (true) {
