@@ -9,6 +9,37 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.32.0-beta.1] — 2026-11-08 (test release for #83: what plays, seeking, pressing a button)
+A **prerelease**: neither the app's own updater nor ha-pipup offers it. Install it with `install.sh`
+from the release.
+### Added
+- **`GET /media`: what plays, in any app** (#83, asked by @Ltek). App, title, artist, album, state
+  (`playing`/`paused`/`buffering`/`stopped`), position and duration from the active media session, so
+  Netflix, YouTube, Plex, Spotify and Jellyfin all report the same way. Also in `/state.media`, and a
+  change of app, state or title, or a seek, is pushed at once as event `media`. Android hands media
+  sessions to an app with an enabled notification listener: `install.sh --media` grants it over adb;
+  PiPup's listener reads no notifications. Without it: 501, `/state.media.access: false`. On low-RAM
+  devices Android ignores the grant (`reason: low_ram`).
+- **`POST /media/seek`**: `ms=` (absolute) or `by=` (± ms), clamped to the title; 409 when the app does
+  not allow seeking.
+- **`POST /click`: press a button in an app** (#83), e.g. Play on a Plex title page that a deep link
+  opened. By resource id, bare name or Jetpack Compose test tag; `wait=` up to 15 s for the view to
+  appear; a view that takes no click is pressed through its nearest parent that does. **`/launch`** takes
+  `click=` and `wait=` to open a page and press its button in one call.
+  Runs in a **separate** accessibility service, "PiPup control", off by default; the screen-off service
+  keeps observing nothing. It works only in apps on a list that is set over adb only
+  (`install.sh --click <apps>`, a broadcast guarded by `WRITE_SECURE_SETTINGS`), so nothing on the LAN
+  can widen it. It reads a window only while a click request runs and never returns what is on screen.
+  `/state.control.click` and `clickPackages` show the state. Unlike the request, the list cannot be set
+  through `/settings`: that port has no login.
+### Fixed
+- **A release is newer than its own pre-releases** in the updater: `0.32.0` > `0.32.0-beta.1`. Before,
+  the suffix counted as a fourth number, so a tester on a beta would never have been offered the final
+  release.
+- **`/state.permissions.accessibility` matches the whole component.** It looked at the package name
+  only, so with only the new control service on, the screen-off service would have read as enabled.
+  `install.sh`/`install.ps1` had the same check and now match the whole component as well.
+
 ## [v0.31.0] — 2026-11-08 (low-latency video; the app screen upright on phones)
 ### Added
 - **`bufferMs` on video popups: an RTSP stream 1 s behind the camera instead of 3–4 s** (#79, idea, patch and
@@ -775,6 +806,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v0.32.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.1
 [v0.31.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.31.0
 [v0.30.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.30.1
 [v0.30.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.30.0

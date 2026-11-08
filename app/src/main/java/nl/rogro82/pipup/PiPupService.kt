@@ -160,6 +160,10 @@ class PiPupService : Service(), WebServer.Handler {
             addAction("android.media.VOLUME_CHANGED_ACTION")
             addAction("android.media.STREAM_MUTE_CHANGED_ACTION")
         })
+        // 0.32.0 (#83): push what is playing as soon as it changes. Does nothing until
+        // media session access is granted; the watchdog and the listener retry.
+        MediaSessions.onChange = { emit("media") }
+        MediaSessions.start(this)
 
         // Android < 12: the installer wants an on-screen confirmation. See
         // launchInstallConfirmation() for why it is launched the way it is (0.26.1, #41).
@@ -264,6 +268,7 @@ class PiPupService : Service(), WebServer.Handler {
         runCatching { mRequestHandler.removeCallbacksAndMessages(null) }
         runCatching { UpdateManager.onPendingUserAction = null }
         runCatching { UpdateManager.onInstallFailed = null }
+        runCatching { MediaSessions.onChange = null }
         runCatching { SoundPlayer.stop(this) }
         super.onDestroy()
 
@@ -569,6 +574,8 @@ class PiPupService : Service(), WebServer.Handler {
                 // local check only (no network): a permission lost by a reinstall or
                 // revoked by the system is pushed as soon as it is seen
                 runCatching { checkPermissionsChanged() }
+                // 0.32.0: picks up a media session grant given after the start
+                runCatching { MediaSessions.start(this@PiPupService) }
                 mWatchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
             }
         }, WATCHDOG_INTERVAL_MS)
@@ -1298,8 +1305,13 @@ class PiPupService : Service(), WebServer.Handler {
             "launch" to true,
             "keys" to TvControl.availableKeys(),
             "lastLaunched" to TvControl.lastLaunched,
-            "lastLaunchedSecondsAgo" to TvControl.lastLaunchedSecondsAgo()
+            "lastLaunchedSecondsAgo" to TvControl.lastLaunchedSecondsAgo(),
+            // 0.32.0 (#83): POST /click works (control service on) and in which apps
+            "click" to PiPupControlService.connected(),
+            "clickPackages" to ClickPolicy.packages(this)
         )
+        // 0.32.0 (#83): what is playing, in any app; {"access": false, "reason"} without the grant
+        state["media"] = MediaSessions.snapshot(this)
         state["volume"] = TvControl.volumeState(this)
         state["permissions"] = Permissions.asMap(this)
         state["update"] = mapOf(
@@ -1430,11 +1442,58 @@ class PiPupService : Service(), WebServer.Handler {
             400 -> NanoHTTPD.Response.Status.BAD_REQUEST
             403 -> NanoHTTPD.Response.Status.FORBIDDEN
             404 -> NanoHTTPD.Response.Status.NOT_FOUND
+            409 -> NanoHTTPD.Response.Status.CONFLICT
             501 -> NanoHTTPD.Response.Status.NOT_IMPLEMENTED
             else -> NanoHTTPD.Response.Status.INTERNAL_ERROR
         }
         if (result.ok) emit("control")
         return jsonResponse(status, mapOf("ok" to result.ok, "message" to result.message) + result.extra)
+    }
+
+    /// GET /media (0.32.0, #83): what is playing; 501 without media session access.
+    private fun mediaResponse(): NanoHTTPD.Response {
+        val media = MediaSessions.snapshot(this)
+        return if (media["access"] == true) jsonResponse(NanoHTTPD.Response.Status.OK, media)
+               else jsonResponse(NanoHTTPD.Response.Status.NOT_IMPLEMENTED,
+                   mapOf("ok" to false, "message" to MediaSessions.unavailableMessage(this)))
+    }
+
+    /// `wait=` in seconds for /click and /launch: 0-15, [default] when absent, null when invalid.
+    private fun waitSeconds(session: NanoHTTPD.IHTTPSession, default: Int): Int? {
+        val raw = param(session, "wait") ?: return default
+        return raw.toIntOrNull()?.takeIf { it in 0..PiPupControlService.MAX_WAIT_SECONDS }
+    }
+
+    /// POST /click (0.32.0, #83): press the view `id` of `package`.
+    private fun clickResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val wait = waitSeconds(session, default = 0) ?: return controlResponse(TvControl.Result(false, 400,
+            "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
+        return controlResponse(PiPupControlService.click(this, param(session, "package"), param(session, "id"), wait))
+    }
+
+    /// POST /launch, since 0.32.0 (#83) optionally followed by a click: open a title's page
+    /// with a deep link, wait for its Play button and press it, in one call.
+    private fun launchResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val pkg = param(session, "package")
+        val click = param(session, "click")
+        // validate before launching: a bad wait= must not leave an app opened half-way
+        val wait = if (click == null) 0 else waitSeconds(session, default = DEFAULT_LAUNCH_CLICK_WAIT)
+            ?: return controlResponse(TvControl.Result(false, 400,
+                "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
+        val launched = TvControl.launch(this, pkg, param(session, "uri"),
+            wake = param(session, "wake")?.lowercase() !in setOf("false", "0", "off"))
+        if (click == null || !launched.ok) return controlResponse(launched)
+        val target = launched.extra["package"] as? String ?: pkg
+            ?: return controlResponse(TvControl.Result(false, 400,
+                "launched, but click= needs package=<name> to know which app to press in",
+                launched.extra + mapOf("launched" to true, "clicked" to false)))
+        val clicked = PiPupControlService.click(this, target, click, wait)
+        return controlResponse(
+            if (clicked.ok) TvControl.Result(true, 200, "launched and clicked $click",
+                launched.extra + mapOf("launched" to true, "clicked" to true))
+            else TvControl.Result(false, clicked.status, "launched, but ${clicked.message}",
+                launched.extra + mapOf("launched" to true, "clicked" to false))
+        )
     }
 
     /// GET /permissions/diagnose - why a fix button did or did not appear.
@@ -1571,6 +1630,7 @@ class PiPupService : Service(), WebServer.Handler {
                         "/settings" -> settingsResponse(session)
                         "/apps" -> appsResponse()
                         "/volume" -> jsonResponse(NanoHTTPD.Response.Status.OK, TvControl.volumeState(this))
+                        "/media" -> mediaResponse()
                         else -> InvalidRequest("unknown uri: ${session.uri}")
                     }
                 }
@@ -1622,10 +1682,12 @@ class PiPupService : Service(), WebServer.Handler {
                         "/settings" -> settingsResponse(session)
                         "/power" -> powerResponse(session)
                         "/apps" -> appsResponse()
-                        "/launch" -> controlResponse(TvControl.launch(this,
-                            param(session, "package"), param(session, "uri"),
-                            wake = param(session, "wake")?.lowercase() !in setOf("false", "0", "off")))
+                        "/launch" -> launchResponse(session)
                         "/key" -> controlResponse(TvControl.key(this, param(session, "key")))
+                        "/click" -> clickResponse(session)
+                        "/media" -> mediaResponse()
+                        "/media/seek" -> controlResponse(MediaSessions.seek(this,
+                            param(session, "ms"), param(session, "by"), param(session, "package")))
                         "/volume" -> controlResponse(TvControl.volume(this,
                             param(session, "level"), param(session, "step"), param(session, "mute"),
                             showUi = param(session, "ui")?.lowercase() !in setOf("false", "0", "off")))
@@ -1848,6 +1910,8 @@ class PiPupService : Service(), WebServer.Handler {
         const val UPDATE_CHECK_FIRST_DELAY_MS = 120_000L
         const val UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
         const val WATCHDOG_INTERVAL_MS = 30_000L
+        /// /launch?click=: how long to wait for the button when no wait= is given (0.32.0)
+        const val DEFAULT_LAUNCH_CLICK_WAIT = 10
         /// 0.29.0: one volume_changed push per burst of volume steps
         const val VOLUME_PUSH_DEBOUNCE_MS = 400L
         const val ONGOING_NOTIFICATION_ID = 123

@@ -16,6 +16,11 @@ streams) on your TV from your home-automation system, for **as long as you want*
 
 ## What this fork adds (compared to [rogro82/PiPup](https://github.com/rogro82/PiPup))
 
+- **What plays, and a button press** (since 0.32.0) — `GET /media` reports the playing app, title,
+  state and position in any app with a media session, `POST /media/seek` jumps to an exact time, and
+  `POST /click` presses a button in an app you allowed (Play on a Plex title page that a deep link
+  opened). Both are off until granted over adb. See [Media sessions](#media-sessions) and
+  [Pressing a button in an app](#pressing-a-button-in-an-app).
 - **TV control** (since 0.29.0) — `POST /launch` starts an app or opens a deep link, `POST /key` sends
   media keys (play/pause, next, …), `POST /volume` sets or steps the volume and mutes, `GET /apps` lists
   what can be launched. No adb needed, so this keeps working on TVs where adb debugging drops its grant
@@ -297,6 +302,7 @@ Grab `install.sh` (Linux/macOS/WSL) or `install.ps1` (Windows) from the
 ```
 ./install.sh 192.168.1.10 192.168.1.11          # downloads the latest APK itself
 ./install.sh --power --apk PiPup.apk 192.168.1.10
+./install.sh --media --click com.plexapp.android 192.168.1.10   # 0.32.0: /media and /click
 # TCL Google TV: the accessibility keep-alive is enabled by default (see the TCL section)
 ```
 
@@ -304,7 +310,9 @@ It installs the APK, grants the app-ops below, starts the service and verifies o
 app is actually answering with the overlay permission in place. `--power` also activates the device
 admin (for screen off), `--accessibility` enables the fallback for that, and `--force-uninstall`
 handles a differently-signed build that is already installed — note that uninstalling wipes the
-app's stable device id, so Home Assistant sees a new device afterwards.
+app's stable device id, so Home Assistant sees a new device afterwards. Since 0.32.0, `--media` gives
+access to the [media sessions](#media-sessions) and `--click <apps>` enables
+[clicking](#pressing-a-button-in-an-app) in the apps you list (`--no-click` switches it off again).
 
 Sleeping TVs are **left asleep**: the service is started in the background, which does not touch
 what is on screen. On a TCL Google TV use `--wake`, because its vendor guard freezes a service
@@ -460,6 +468,10 @@ trust boundary the network itself.
 - Since 0.29.0 the port also takes `/launch`, `/key` and `/volume`: anyone on the LAN can start an app,
   pause what is playing or change the volume — what a guest with the remote can do, no more. `/launch`
   only starts apps and links; it cannot install, grant or change anything.
+- Since 0.32.0, with media session access granted, anyone on the LAN can read what is playing (app and
+  title) and seek in it. `/click` presses buttons, but only with the control service switched on and only
+  in the apps you listed; both are set over adb, so nothing on the LAN can widen them, and the service
+  never reports what is on the screen.
 - Since 0.29.0 nothing of PiPup goes into an Android backup or a device-to-device transfer: settings
   include the push webhook URL (anyone holding it can post to it) and the stable device id, which would
   make a new TV show up as the old one. A new or restored TV starts clean and is discovered as a new
@@ -929,6 +941,9 @@ this device cannot do it, 400 for a malformed request.
 | `/launch` | POST | `package=<name>` and/or `uri=<deep link>`; `wake=false` to leave a sleeping screen off |
 | `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back` |
 | `/volume` | GET / POST | one of `level=0-100`, `step=up\|down`, `mute=on\|off\|toggle`; `ui=false` hides the volume bar |
+| `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-15 s>` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (0.32.0) |
+| `/media` | GET | what is playing, in any app — see [Media sessions](#media-sessions) (0.32.0) |
+| `/media/seek` | POST | `ms=<position>` or `by=<+/- ms>`, optionally `package=` (0.32.0) |
 
 ```
 curl -X POST "http://tv:7979/launch?package=com.netflix.ninja"
@@ -950,7 +965,103 @@ curl -X POST "http://tv:7979/volume?level=30"
   `mute` are passed on and the platform forwards them over CEC where it can. A volume change, also one
   made with the remote, is pushed as `volume_changed`.
 - PiPup cannot see which app is in the foreground (that needs usage access, a grant with no screen on a
-  TV). `/state.control.lastLaunched` is only what PiPup itself started.
+  TV). `/state.control.lastLaunched` is only what PiPup itself started. With
+  [media session access](#media-sessions), `/state.media.package` shows which app plays.
+
+#### Pressing a button in an app
+
+Since 0.32.0 (#83). A deep link often stops on a title's page: Plex's `plex://…` opens the film but
+does not start it. `/click` presses a button there, the way the remote's OK would:
+
+```
+curl -X POST "http://tv:7979/click?package=com.plexapp.android&id=action-button-watch&wait=5"
+# or in one call: open the page, wait for the button (10 s by default), press it
+curl -X POST "http://tv:7979/launch?package=com.plexapp.android&uri=plex://…&click=action-button-watch"
+```
+
+`id` is the view's resource id: the full form (`com.app:id/play`), the bare name (`play`), or a Jetpack
+Compose test tag (`action-button-watch`). Find it with `adb shell uiautomator dump` and look at
+`resource-id`. A view that does not take a click itself is pressed through its nearest parent that does.
+
+| Status | Meaning |
+|---|---|
+| 200 | `{"ok": true, "message": "clicked action-button-watch"}` (after `/launch`: also `launched`, `clicked`) |
+| 400 | `package` or `id` missing, or `wait` outside 0–15 |
+| 403 | the app is not on the list of apps PiPup may press in |
+| 404 | the app is not on screen, or the view did not appear within `wait` |
+| 501 | the control service is not switched on |
+
+**Off until you switch it on, and only in the apps you list.** Clicking runs in a separate
+accessibility service, "PiPup control"; the screen-off service keeps observing nothing. Both the service
+and the list of apps are set over adb only, never over the network:
+
+```
+./install.sh --click com.plexapp.android,com.google.android.youtube.tv <tv-ip>
+./install.sh --no-click <tv-ip>     # off again, list cleared
+```
+
+or by hand (keep any services already in the setting):
+
+```
+adb shell settings put secure enabled_accessibility_services <current>:nl.rogro82.pipup/nl.rogro82.pipup.PiPupControlService
+adb shell settings put secure accessibility_enabled 1
+adb shell am broadcast -f 0x20 -n nl.rogro82.pipup/.ControlConfigReceiver \
+    -a nl.rogro82.pipup.SET_CLICK_PACKAGES --es packages "com.plexapp.android"
+```
+
+The broadcast answers with the list as it now is (`data="com.plexapp.android"`); `--es packages ""` empties
+it, leaving the extra out only reads it. The service declares no events, so it receives nothing by itself: it
+reads a window only while a `/click` runs, only when the app in front is on the list, and it answers
+whether the click happened, never what is on the screen. `/state.control.click` says whether the
+service is on, `/state.control.clickPackages` which apps are allowed.
+
+#### Media sessions
+
+Since 0.32.0 (#83). What is playing, in any app that has a media session (Netflix, YouTube, Plex,
+Spotify, Jellyfin, …), and seeking to an exact time:
+
+```
+curl "http://tv:7979/media"
+curl -X POST "http://tv:7979/media/seek?ms=2472000"     # to 41:12
+curl -X POST "http://tv:7979/media/seek?by=-10000"      # back 10 seconds
+```
+
+```json
+{
+  "access": true,
+  "package": "com.plexapp.android",
+  "state": "playing",
+  "positionMs": 2472000,
+  "positionUpdatedAt": "2026-11-05T16:20:00.000Z",
+  "durationMs": 5400000,
+  "speed": 1.0,
+  "title": "Bill & Ted's Excellent Adventure",
+  "artist": null,
+  "album": null,
+  "canSeek": true
+}
+```
+
+- `state` is `playing`, `paused`, `buffering` or `stopped`. `positionMs` is the position at
+  `positionUpdatedAt` (the moment of the answer); `null` fields are ones the app does not report.
+- With nothing playing: `{"access": true, "package": null}`. Of several sessions, the first one that plays
+  is reported, in Android's priority order.
+- `/media/seek` takes exactly one of `ms` or `by`, and `package=` to seek in that app's session instead of
+  the reported one. It answers **409** when the app does not allow seeking (`canSeek: false`), **404**
+  when nothing plays.
+- The same object is in `/state.media`, and a change of app, state or title, or a seek, is pushed at
+  once as event `media` (the position moving on is not: work it out from `positionUpdatedAt` and `speed`).
+
+Android hands media sessions to an app with an enabled notification listener. PiPup's listener only
+exists for that grant and reads no notifications. Give it once over adb (`install.sh --media`):
+
+```
+adb shell cmd notification allow_listener nl.rogro82.pipup/nl.rogro82.pipup.MediaListenerService
+```
+
+Without it, `/media` answers **501** and `/state.media` is `{"access": false, "reason": "not_granted"}`.
+On a device marked low-RAM (`getprop ro.config.low_ram`), Android ignores the grant: `reason` is then
+`low_ram`.
 
 ### Permission screen
 
@@ -1083,7 +1194,8 @@ Two more keys:
   `replacedId`, both the id that was redrawn), `popup_removed` (with `reason`
   expired / cancelled / button / back / watchdog, and `removedId`), `started`, `screen_on`,
   `screen_off`, `permissions`, `volume_changed` and `control` (after a launch, key or volume call;
-  since 0.29.0), and `settings` right after the webhook is set. A failed POST is
+  since 0.29.0), `media` (what plays changed, or a seek; since 0.32.0), and `settings` right after the
+  webhook is set. A failed POST is
   retried once after 2 s. Empty turns push off. `/settings` answers only whether one is set: the URL
   is the controller's secret. `/state.push` shows the last push result.
 - `updateSource`: `github:<owner>/<repo>` (default `github:mhoogenbosch/PiPup`), or an `http(s)` folder
@@ -1132,6 +1244,9 @@ Returns the current state as JSON:
   }
 }
 ```
+
+Since v0.32.0 `control` also has `click` (the control service is on) and `clickPackages` (the apps it may
+press in), and `media` is what plays, as in [Media sessions](#media-sessions).
 
 Since v0.29.0 `control` lists what [TV control](#tv-control) can do here, and `volume` the media volume
 (`fixed: true` = it belongs to the TV set or amplifier).

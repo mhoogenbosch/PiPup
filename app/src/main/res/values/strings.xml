@@ -13,6 +13,9 @@
     <string name="update_available_message">Press OK to install the update now.</string>
     <string name="update_install">Install</string>
     <string name="accessibility_service_description">Lets PiPup turn the screen off on request. Only needed on devices where the device admin cannot; PiPup reads nothing from the screen.</string>
+    <string name="control_service_label">PiPup control</string>
+    <string name="control_service_description">Lets Home Assistant press a button in an app you allowed, such as Play in Plex. It reads a window only while such a request runs, only for an allowed app, and reports nothing but whether the click happened.</string>
+    <string name="media_listener_label">PiPup media sessions</string>
     <string name="permission_overlay">Overlay permission</string>
     <string name="permission_install">Self-update permission</string>
     <string name="permission_line_ok">%1$s: granted</string>

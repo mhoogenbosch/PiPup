@@ -35,7 +35,18 @@ param(
 
     # wake the TV and start the app in the foreground instead of starting the service
     # in the background; needed on TCL Google TVs, elsewhere it only switches the TV on
-    [switch]$Wake
+    [switch]$Wake,
+
+    # app >= 0.32.0: give access to the active media sessions (GET /media, POST /media/seek);
+    # Android ignores it on low-RAM devices
+    [switch]$Media,
+
+    # app >= 0.32.0: let PiPup press buttons in these apps (comma-separated, e.g.
+    # com.plexapp.android): enables the separate "PiPup control" accessibility service
+    [string]$Click,
+
+    # switch the control service off and clear the list of apps
+    [switch]$NoClick
 )
 
 $ErrorActionPreference = 'Continue'
@@ -43,12 +54,59 @@ $ErrorActionPreference = 'Continue'
 $Package = 'nl.rogro82.pipup'
 $AdminComponent = "$Package/.AdminReceiver"
 $AccessibilityComponent = "$Package/$Package.PiPupAccessibilityService"
+$ControlComponent = "$Package/$Package.PiPupControlService"
+$MediaComponent = "$Package/$Package.MediaListenerService"
 $Repo = 'mhoogenbosch/PiPup'
 $Port = 7979
 
 function Write-Ok    { param($m) Write-Host "  [ok] $m" -ForegroundColor Green }
 function Write-Warn  { param($m) Write-Host "  [!]  $m" -ForegroundColor Yellow }
 function Write-Fail  { param($m) Write-Host "  [x]  $m" -ForegroundColor Red }
+
+# the list goes into a remote shell command: package names only
+if ($Click -and $Click -notmatch '^[A-Za-z0-9._,]+$') {
+    Write-Fail '-Click: only package names, separated by commas'
+    exit 2
+}
+
+# Whether the ':'-separated list holds the component, in the full (pkg/pkg.Cls) or short
+# (pkg/.Cls) form. The whole component: since 0.32.0 PiPup has two accessibility
+# services, and one being on must not read as the other being on.
+function Test-Component {
+    param([string]$List, [string]$Component)
+    $short = $Component.Replace("/$Package.", '/.')
+    return @($List -split ':') -contains $Component -or @($List -split ':') -contains $short
+}
+
+function Enable-Accessibility {
+    param([string]$Target, [string]$Component, [string]$Label)
+    $current = ((adb -s $Target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
+    if (Test-Component $current $Component) {
+        Write-Ok "$Label already enabled"
+        return
+    }
+    $merged = if ($current -and $current -ne 'null') { "${current}:$Component" } else { $Component }
+    adb -s $Target shell "settings put secure enabled_accessibility_services $merged" | Out-Null
+    adb -s $Target shell 'settings put secure accessibility_enabled 1' | Out-Null
+    Write-Ok "$Label enabled"
+}
+
+function Disable-Accessibility {
+    param([string]$Target, [string]$Component, [string]$Label)
+    $current = ((adb -s $Target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
+    if (-not (Test-Component $current $Component)) {
+        Write-Ok "$Label already off"
+        return
+    }
+    $short = $Component.Replace("/$Package.", '/.')
+    $kept = (@($current -split ':') | Where-Object { $_ -ne $Component -and $_ -ne $short }) -join ':'
+    if ($kept) {
+        adb -s $Target shell "settings put secure enabled_accessibility_services $kept" | Out-Null
+    } else {
+        adb -s $Target shell 'settings delete secure enabled_accessibility_services' | Out-Null
+    }
+    Write-Ok "$Label switched off"
+}
 
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
     Write-Fail 'adb not found on PATH'
@@ -162,14 +220,43 @@ foreach ($device in $Devices) {
     }
 
     if ($Accessibility) {
-        $current = ((adb -s $target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
-        if ($current -like "*$Package*") {
-            Write-Ok 'accessibility service already enabled'
+        Enable-Accessibility $target $AccessibilityComponent 'accessibility fallback'
+    }
+
+    # 0.32.0 (#83): media sessions. Android lists them for an app whose notification
+    # listener is enabled; PiPup's listener reads no notifications.
+    if ($Media) {
+        adb -s $target shell "cmd notification allow_listener $MediaComponent" | Out-Null
+        $listeners = ((adb -s $target shell 'settings get secure enabled_notification_listeners' 2>$null) -join '').Trim()
+        if (-not (Test-Component $listeners $MediaComponent)) {
+            # Android < 8 has no `cmd notification allow_listener`
+            $merged = if ($listeners -and $listeners -ne 'null') { "${listeners}:$MediaComponent" } else { $MediaComponent }
+            adb -s $target shell "settings put secure enabled_notification_listeners $merged" | Out-Null
+        }
+        if (((adb -s $target shell 'getprop ro.config.low_ram' 2>$null) -join '').Trim() -eq 'true') {
+            Write-Warn 'low-RAM device: Android gives no app access to media sessions here'
         } else {
-            $merged = if ($current -and $current -ne 'null') { "${current}:$AccessibilityComponent" } else { $AccessibilityComponent }
-            adb -s $target shell "settings put secure enabled_accessibility_services $merged" | Out-Null
-            adb -s $target shell 'settings put secure accessibility_enabled 1' | Out-Null
-            Write-Ok 'accessibility fallback enabled'
+            Write-Host '  .  media session access requested (verifying below)'
+        }
+    }
+
+    # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
+    # The list can only be set like this (adb), never over the LAN.
+    $clickList = $null
+    if ($Click) {
+        Enable-Accessibility $target $ControlComponent 'control service (click)'
+        $clickList = $Click
+    } elseif ($NoClick) {
+        Disable-Accessibility $target $ControlComponent 'control service (click)'
+        $clickList = ''
+    }
+    if ($null -ne $clickList) {
+        $result = (adb -s $target shell "am broadcast -f 0x20 -n $Package/.ControlConfigReceiver -a $Package.SET_CLICK_PACKAGES --es packages '$clickList'" 2>&1) -join ' '
+        if ($result -match 'result=1') {
+            $allowed = if ($result -match 'data="([^"]*)"') { $Matches[1] } else { '' }
+            Write-Ok "click allowed in: $(if ($allowed) { $allowed } else { 'no app' })"
+        } else {
+            Write-Fail "could not set the click list (app older than 0.32.0?): $result"
         }
     }
 
@@ -200,6 +287,13 @@ foreach ($device in $Devices) {
         Write-Ok "running: v$($state.version) on http://${tvHost}:$Port (overlay=$($state.permissions.overlay))"
         if (-not $state.permissions.overlay) {
             Write-Fail 'overlay permission still missing - popups will stay invisible'
+        }
+        if ($Media) {
+            if ($state.media.access) {
+                Write-Ok 'media sessions readable (GET /media)'
+            } else {
+                Write-Warn "media sessions NOT readable yet: $($state.media.reason)"
+            }
         }
         if ($Power -or $Accessibility) {
             if ($state.power.canSleep) {
