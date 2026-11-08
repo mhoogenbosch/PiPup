@@ -471,7 +471,9 @@ trust boundary the network itself.
 - Since 0.32.0, with media session access granted, anyone on the LAN can read what is playing (app and
   title) and seek in it. `/click` presses buttons, but only with the control service switched on and only
   in the apps you listed; both are set over adb, so nothing on the LAN can widen them, and the service
-  never reports what is on the screen.
+  never reports what is on the screen. Within a listed app, though, anyone on the LAN can press **any**
+  view by its id, so list only apps where that is harmless (a player, not a store with a Buy button).
+  `/state.control.clickPackages` shows the list.
 - Since 0.29.0 nothing of PiPup goes into an Android backup or a device-to-device transfer: settings
   include the push webhook URL (anyone holding it can post to it) and the stable device id, which would
   make a new TV show up as the old one. A new or restored TV starts clean and is discovered as a new
@@ -989,6 +991,7 @@ Compose test tag (`action-button-watch`). Find it with `adb shell uiautomator du
 | 400 | `package` or `id` missing, or `wait` outside 0–15 |
 | 403 | the app is not on the list of apps PiPup may press in |
 | 404 | the app is not on screen, or the view did not appear within `wait` |
+| 409 | another click is still running (one at a time) |
 | 501 | the control service is not switched on |
 
 **Off until you switch it on, and only in the apps you list.** Clicking runs in a separate
@@ -1046,6 +1049,9 @@ curl -X POST "http://tv:7979/media/seek?by=-10000"      # back 10 seconds
   `positionUpdatedAt` (the moment of the answer); `null` fields are ones the app does not report.
 - With nothing playing: `{"access": true, "package": null}`. Of several sessions, the first one that plays
   is reported, in Android's priority order.
+- **Only active sessions count.** Android lists a session only while the app marks it active. Most players
+  do that while they play (tested: Spotify on Fire TV), but not every app: SmartTube plays with an inactive
+  session and stays invisible here, as do apps that keep their session inactive while paused.
 - `/media/seek` takes exactly one of `ms` or `by`, and `package=` to seek in that app's session instead of
   the reported one. It answers **409** when the app does not allow seeking (`canSeek: false`), **404**
   when nothing plays.

@@ -19,7 +19,8 @@ from the release.
   change of app, state or title, or a seek, is pushed at once as event `media`. Android hands media
   sessions to an app with an enabled notification listener: `install.sh --media` grants it over adb;
   PiPup's listener reads no notifications. Without it: 501, `/state.media.access: false`. On low-RAM
-  devices Android ignores the grant (`reason: low_ram`).
+  devices Android ignores the grant (`reason: low_ram`). Only sessions the app marks active are listed:
+  Spotify shows up while it plays, SmartTube (inactive session) does not.
 - **`POST /media/seek`**: `ms=` (absolute) or `by=` (± ms), clamped to the title; 409 when the app does
   not allow seeking.
 - **`POST /click`: press a button in an app** (#83), e.g. Play on a Plex title page that a deep link
@@ -31,7 +32,10 @@ from the release.
   (`install.sh --click <apps>`, a broadcast guarded by `WRITE_SECURE_SETTINGS`), so nothing on the LAN
   can widen it. It reads a window only while a click request runs and never returns what is on screen.
   `/state.control.click` and `clickPackages` show the state. Unlike the request, the list cannot be set
-  through `/settings`: that port has no login.
+  through `/settings`: that port has no login. One click at a time (a second one answers 409); only app
+  windows are read.
+- Tested on a Fire TV Stick 4K Max (Fire OS 7, Android 9): `install.sh --media --click`, `/media` and seeking
+  with Spotify, `/click` and `/launch?click=` in SmartTube (a label pressed through its card), 403/404/400.
 ### Fixed
 - **A release is newer than its own pre-releases** in the updater: `0.32.0` > `0.32.0-beta.1`. Before,
   the suffix counted as a fourth number, so a tester on a beta would never have been offered the final

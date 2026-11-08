@@ -155,13 +155,27 @@ object MediaSessions {
     // process (popups included): each entry point catches everything.
     private fun startOnMain() = guarded("start") {
         val context = appContext ?: return@guarded
-        val list = controllers(context) ?: return@guarded
+        val list = controllers(context)
+        if (list == null) {
+            // access gone (revoked): drop the registrations, so a later grant sets them up anew
+            if (listening || tracked.isNotEmpty()) stopTracking(context)
+            return@guarded
+        }
         if (!listening) {
             manager(context).addOnActiveSessionsChangedListener(sessionsListener, component(context), handler)
             listening = true
             Log.i(LOG_TAG, "tracking media sessions")
         }
         track(list)
+    }
+
+    private fun stopTracking(context: Context) {
+        runCatching { manager(context).removeOnActiveSessionsChangedListener(sessionsListener) }
+        tracked.values.forEach { (controller, callback) -> runCatching { controller.unregisterCallback(callback) } }
+        tracked.clear()
+        listening = false
+        lastPushed = null
+        Log.i(LOG_TAG, "media session access gone; stopped tracking")
     }
 
     private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { list ->

@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import java.util.concurrent.atomic.AtomicBoolean
 
 /// "PiPup control" (0.32.0, #83): presses a button in an app on request, e.g. Play on a
 /// title page that a deep link opened.
@@ -52,6 +54,8 @@ class PiPupControlService : AccessibilityService() {
             rootInActiveWindow?.let { if (it.packageName?.toString() == pkg) return it }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 for (window in windows) {
+                    // app windows only: no keyboard, system or overlay windows are read
+                    if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                     val root = window.root ?: continue
                     if (root.packageName?.toString() == pkg) return root
                 }
@@ -75,6 +79,10 @@ class PiPupControlService : AccessibilityService() {
         @Volatile
         private var instance: PiPupControlService? = null
 
+        /// One click at a time: two requests must not both press, and each may hold its
+        /// HTTP thread for up to MAX_WAIT_SECONDS.
+        private val busy = AtomicBoolean(false)
+
         fun connected(): Boolean = instance != null
 
         /// Press the view [id] of [pkg], waiting up to [waitSeconds] for it to appear.
@@ -92,11 +100,16 @@ class PiPupControlService : AccessibilityService() {
                 return TvControl.Result(false, 403, "$pkg is not on the list of apps PiPup may press " +
                     "buttons in (install.sh --click $pkg, or the click option in ha-pipup)")
             }
+            if (!busy.compareAndSet(false, true)) {
+                return TvControl.Result(false, 409, "another click is still running; try again when it is done")
+            }
             return try {
                 clickLoop(pkg, id, waitSeconds)
             } catch (ex: Throwable) {
                 Log.w(LOG_TAG, "click $pkg $id failed: ${ex.message}")
                 TvControl.Result(false, 500, "click failed: ${ex.message}")
+            } finally {
+                busy.set(false)
             }
         }
 

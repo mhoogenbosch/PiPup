@@ -226,12 +226,18 @@ foreach ($device in $Devices) {
     # 0.32.0 (#83): media sessions. Android lists them for an app whose notification
     # listener is enabled; PiPup's listener reads no notifications.
     if ($Media) {
-        adb -s $target shell "cmd notification allow_listener $MediaComponent" | Out-Null
-        $listeners = ((adb -s $target shell 'settings get secure enabled_notification_listeners' 2>$null) -join '').Trim()
-        if (-not (Test-Component $listeners $MediaComponent)) {
-            # Android < 8 has no `cmd notification allow_listener`
-            $merged = if ($listeners -and $listeners -ne 'null') { "${listeners}:$MediaComponent" } else { $MediaComponent }
-            adb -s $target shell "settings put secure enabled_notification_listeners $merged" | Out-Null
+        $sdk = 0
+        [void][int]::TryParse(((adb -s $target shell 'getprop ro.build.version.sdk' 2>$null) -join '').Trim(), [ref]$sdk)
+        if ($sdk -ge 26) {
+            adb -s $target shell "cmd notification allow_listener $MediaComponent" | Out-Null
+        } else {
+            # Android < 8 has no `cmd notification allow_listener`; there the setting itself
+            # is the list (from 8 on it is only a mirror, so it is not written there)
+            $listeners = ((adb -s $target shell 'settings get secure enabled_notification_listeners' 2>$null) -join '').Trim()
+            if (-not (Test-Component $listeners $MediaComponent)) {
+                $merged = if ($listeners -and $listeners -ne 'null') { "${listeners}:$MediaComponent" } else { $MediaComponent }
+                adb -s $target shell "settings put secure enabled_notification_listeners $merged" | Out-Null
+            }
         }
         if (((adb -s $target shell 'getprop ro.config.low_ram' 2>$null) -join '').Trim() -eq 'true') {
             Write-Warn 'low-RAM device: Android gives no app access to media sessions here'

@@ -254,15 +254,20 @@ for device in "${DEVICES[@]}"; do
     # 0.32.0 (#83): media sessions. Android lists them for an app whose notification
     # listener is enabled; PiPup's listener reads no notifications.
     if [ "$GRANT_MEDIA" -eq 1 ]; then
-        adb -s "$target" shell "cmd notification allow_listener $MEDIA_COMPONENT" >/dev/null 2>&1
-        listeners=$(adb -s "$target" shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r')
-        if ! has_component "$listeners" "$MEDIA_COMPONENT"; then
-            # Android < 8 has no `cmd notification allow_listener`
-            case "$listeners" in
-                null|"") merged="$MEDIA_COMPONENT" ;;
-                *)       merged="$listeners:$MEDIA_COMPONENT" ;;
-            esac
-            adb -s "$target" shell "settings put secure enabled_notification_listeners $merged" >/dev/null 2>&1
+        sdk=$(adb -s "$target" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')
+        if [ "${sdk:-0}" -ge 26 ]; then
+            adb -s "$target" shell "cmd notification allow_listener $MEDIA_COMPONENT" >/dev/null 2>&1
+        else
+            # Android < 8 has no `cmd notification allow_listener`; there the setting itself
+            # is the list (from 8 on it is only a mirror, so it is not written there)
+            listeners=$(adb -s "$target" shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r')
+            if ! has_component "$listeners" "$MEDIA_COMPONENT"; then
+                case "$listeners" in
+                    null|"") merged="$MEDIA_COMPONENT" ;;
+                    *)       merged="$listeners:$MEDIA_COMPONENT" ;;
+                esac
+                adb -s "$target" shell "settings put secure enabled_notification_listeners $merged" >/dev/null 2>&1
+            fi
         fi
         if [ "$(adb -s "$target" shell getprop ro.config.low_ram 2>/dev/null | tr -d '\r')" = "true" ]; then
             warn "low-RAM device: Android gives no app access to media sessions here"
