@@ -3,10 +3,14 @@
      observing nothing. This one may read window content (canRetrieveWindowContent, view ids,
      interactive windows) but declares no event types, so it receives nothing on its own: it
      reads a window only while a POST /click runs, only for an app on the adb-set list, and
-     answers nothing but whether the click happened. -->
+     answers nothing but whether the click happened.
+     canPerformGestures (0.32.0-beta.2): for method=tap, a short touch on the centre of the view
+     that was found, for apps that ignore ACTION_CLICK (Plex). It taps only there, only while a
+     /click request runs, under the same list. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
         android:accessibilityFeedbackType="feedbackGeneric"
         android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+        android:canPerformGestures="true"
         android:canRetrieveWindowContent="true"
         android:description="@string/control_service_description"
         android:notificationTimeout="0"/>

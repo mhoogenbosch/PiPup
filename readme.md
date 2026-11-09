@@ -943,7 +943,7 @@ this device cannot do it, 400 for a malformed request.
 | `/launch` | POST | `package=<name>` and/or `uri=<deep link>`; `wake=false` to leave a sleeping screen off |
 | `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back` |
 | `/volume` | GET / POST | one of `level=0-100`, `step=up\|down`, `mute=on\|off\|toggle`; `ui=false` hides the volume bar |
-| `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-15 s>` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (0.32.0) |
+| `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-30 s>`, `method=click\|tap` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (0.32.0) |
 | `/media` | GET | what is playing, in any app — see [Media sessions](#media-sessions) (0.32.0) |
 | `/media/seek` | POST | `ms=<position>` or `by=<+/- ms>`, optionally `package=` (0.32.0) |
 
@@ -976,23 +976,38 @@ Since 0.32.0 (#83). A deep link often stops on a title's page: Plex's `plex://�
 does not start it. `/click` presses a button there, the way the remote's OK would:
 
 ```
-curl -X POST "http://tv:7979/click?package=com.plexapp.android&id=action-button-watch&wait=5"
-# or in one call: open the page, wait for the button (10 s by default), press it
-curl -X POST "http://tv:7979/launch?package=com.plexapp.android&uri=plex://…&click=action-button-watch"
+curl -X POST "http://tv:7979/click?package=com.plexapp.android&id=action-button-watch&wait=5&method=tap"
+# or in one call: open the page, wait for the button (10 s by default, up to 30), press it
+curl -X POST "http://tv:7979/launch?package=com.plexapp.android&uri=plex://…&click=action-button-watch&method=tap&wait=30"
 ```
 
 `id` is the view's resource id: the full form (`com.app:id/play`), the bare name (`play`), or a Jetpack
 Compose test tag (`action-button-watch`). Find it with `adb shell uiautomator dump` and look at
 `resource-id`. A view that does not take a click itself is pressed through its nearest parent that does.
 
+`method` (since 0.32.0-beta.2) chooses how the button is pressed:
+- `click` (the default): an accessibility click. Works in apps built with Android views or Jetpack Compose.
+- `tap`: a short touch on the centre of the view that was found (Android 7+). For apps whose buttons
+  accept the accessibility click and then do nothing, such as **Plex** (React Native): there
+  `action-button-watch` only starts the film with `method=tap`.
+
+`wait` is how long to wait for the view to appear, 0–30 s (15 before 0.32.0-beta.2). A cold start of
+Plex, with its logo and profile screen, can take over 10 s.
+
+After the press the app watches the view for up to 1.5 s and answers `changed`: `true` when it left the
+screen, moved, or its app left the front (a player opened), `false` when nothing happened to it. Use
+it as a hint: a button that only changes its own label (play/pause) reads as `false` even though the
+press worked. A press that changes nothing answers about 1.5 s later than one that does.
+
 | Status | Meaning |
 |---|---|
-| 200 | `{"ok": true, "message": "clicked action-button-watch"}` (after `/launch`: also `launched`, `clicked`) |
-| 400 | `package` or `id` missing, or `wait` outside 0–15 |
+| 200 | `{"ok": true, "message": "tapped action-button-watch", "method": "tap", "changed": true}` (after `/launch`: also `launched`, `clicked`) |
+| 400 | `package` or `id` missing, `wait` outside 0–30, or `method` other than `click`/`tap` |
 | 403 | the app is not on the list of apps PiPup may press in |
 | 404 | the app is not on screen, or the view did not appear within `wait` |
 | 409 | another click is still running (one at a time) |
-| 501 | the control service is not switched on |
+| 500 | the view was found, but the app refused the click, or Android refused the tap |
+| 501 | the control service is not switched on; for `tap` also: Android older than 7, or a service switched on before 0.32.0-beta.2 that has not been restarted (switch it off and on: `install.sh --click`) |
 
 **Off until you switch it on, and only in the apps you list.** Clicking runs in a separate
 accessibility service, "PiPup control"; the screen-off service keeps observing nothing. Both the service
@@ -1015,8 +1030,9 @@ adb shell am broadcast -f 0x20 -n nl.rogro82.pipup/.ControlConfigReceiver \
 The broadcast answers with the list as it now is (`data="com.plexapp.android"`); `--es packages ""` empties
 it, leaving the extra out only reads it. The service declares no events, so it receives nothing by itself: it
 reads a window only while a `/click` runs, only when the app in front is on the list, and it answers
-whether the click happened, never what is on the screen. `/state.control.click` says whether the
-service is on, `/state.control.clickPackages` which apps are allowed.
+whether the click happened, never what is on the screen. A `tap` touches only the centre of the view it
+found, during that same request. `/state.control.click` says whether the service is on,
+`/state.control.tap` whether it may tap, `/state.control.clickPackages` which apps are allowed.
 
 #### Media sessions
 
@@ -1251,8 +1267,9 @@ Returns the current state as JSON:
 }
 ```
 
-Since v0.32.0 `control` also has `click` (the control service is on) and `clickPackages` (the apps it may
-press in), and `media` is what plays, as in [Media sessions](#media-sessions).
+Since v0.32.0 `control` also has `click` (the control service is on), `tap` (it may tap, since
+0.32.0-beta.2) and `clickPackages` (the apps it may press in), and `media` is what plays, as in
+[Media sessions](#media-sessions).
 
 Since v0.29.0 `control` lists what [TV control](#tv-control) can do here, and `volume` the media volume
 (`fixed: true` = it belongs to the TV set or amplifier).

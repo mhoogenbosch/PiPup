@@ -121,6 +121,35 @@ class MediaClickTest {
         assertFalse(enabledListContains("null", pkg, main))
     }
 
+    // ---------------------------------------------------------------- tap (0.32.0-beta.2)
+
+    @Test
+    fun methodDefaultsToClickAndRejectsUnknownNames() {
+        assertEquals(ClickMethod.CLICK, ClickMethod.parse(null))
+        assertEquals(ClickMethod.CLICK, ClickMethod.parse(""))
+        assertEquals(ClickMethod.CLICK, ClickMethod.parse("  "))
+        assertEquals(ClickMethod.CLICK, ClickMethod.parse("click"))
+        assertEquals(ClickMethod.TAP, ClickMethod.parse("tap"))
+        assertEquals(ClickMethod.TAP, ClickMethod.parse(" TAP "))
+        assertNull(ClickMethod.parse("press"))
+        assertNull(ClickMethod.parse("tap;rm"))
+    }
+
+    @Test
+    fun tapLandsOnTheCentreOfTheBounds() {
+        // Plex's Watch button on the TCL, from uiautomator: [128,564][267,628]
+        assertEquals(197.5f to 596f, tapPoint(128, 564, 267, 628))
+        assertEquals(1f to 1f, tapPoint(0, 0, 2, 2))
+    }
+
+    @Test
+    fun noTapWithoutAreaOnScreen() {
+        assertNull(tapPoint(10, 10, 10, 50))     // no width
+        assertNull(tapPoint(10, 50, 60, 50))     // no height
+        assertNull(tapPoint(60, 10, 10, 50))     // inverted
+        assertNull(tapPoint(-100, -100, -20, -20)) // off screen
+    }
+
     // ---------------------------------------------------------------- versions
 
     @Test

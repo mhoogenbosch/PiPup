@@ -1308,6 +1308,8 @@ class PiPupService : Service(), WebServer.Handler {
             "lastLaunchedSecondsAgo" to TvControl.lastLaunchedSecondsAgo(),
             // 0.32.0 (#83): POST /click works (control service on) and in which apps
             "click" to PiPupControlService.connected(),
+            // 0.32.0-beta.2: method=tap can be used (Android 7+, gesture capability granted)
+            "tap" to PiPupControlService.canTap(),
             "clickPackages" to ClickPolicy.packages(this)
         )
         // 0.32.0 (#83): what is playing, in any app; {"access": false, "reason"} without the grant
@@ -1458,17 +1460,21 @@ class PiPupService : Service(), WebServer.Handler {
                    mapOf("ok" to false, "message" to MediaSessions.unavailableMessage(this)))
     }
 
-    /// `wait=` in seconds for /click and /launch: 0-15, [default] when absent, null when invalid.
+    /// `wait=` in seconds for /click and /launch: 0-30, [default] when absent, null when invalid.
     private fun waitSeconds(session: NanoHTTPD.IHTTPSession, default: Int): Int? {
         val raw = param(session, "wait") ?: return default
         return raw.toIntOrNull()?.takeIf { it in 0..PiPupControlService.MAX_WAIT_SECONDS }
     }
 
-    /// POST /click (0.32.0, #83): press the view `id` of `package`.
+    /// POST /click (0.32.0, #83): press the view `id` of `package`; `method=tap` (0.32.0-beta.2)
+    /// touches its centre instead, for apps that ignore an accessibility click.
     private fun clickResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
         val wait = waitSeconds(session, default = 0) ?: return controlResponse(TvControl.Result(false, 400,
             "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
-        return controlResponse(PiPupControlService.click(this, param(session, "package"), param(session, "id"), wait))
+        val method = ClickMethod.parse(param(session, "method"))
+            ?: return controlResponse(TvControl.Result(false, 400, METHOD_HINT))
+        return controlResponse(
+            PiPupControlService.click(this, param(session, "package"), param(session, "id"), wait, method))
     }
 
     /// POST /launch, since 0.32.0 (#83) optionally followed by a click: open a title's page
@@ -1480,6 +1486,8 @@ class PiPupService : Service(), WebServer.Handler {
         val wait = if (click == null) 0 else waitSeconds(session, default = DEFAULT_LAUNCH_CLICK_WAIT)
             ?: return controlResponse(TvControl.Result(false, 400,
                 "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
+        val method = ClickMethod.parse(param(session, "method"))
+            ?: return controlResponse(TvControl.Result(false, 400, METHOD_HINT))
         val launched = TvControl.launch(this, pkg, param(session, "uri"),
             wake = param(session, "wake")?.lowercase() !in setOf("false", "0", "off"))
         if (click == null || !launched.ok) return controlResponse(launched)
@@ -1487,12 +1495,12 @@ class PiPupService : Service(), WebServer.Handler {
             ?: return controlResponse(TvControl.Result(false, 400,
                 "launched, but click= needs package=<name> to know which app to press in",
                 launched.extra + mapOf("launched" to true, "clicked" to false)))
-        val clicked = PiPupControlService.click(this, target, click, wait)
+        val clicked = PiPupControlService.click(this, target, click, wait, method)
         return controlResponse(
-            if (clicked.ok) TvControl.Result(true, 200, "launched and clicked $click",
-                launched.extra + mapOf("launched" to true, "clicked" to true))
+            if (clicked.ok) TvControl.Result(true, 200, "launched and ${clicked.message}",
+                launched.extra + clicked.extra + mapOf("launched" to true, "clicked" to true))
             else TvControl.Result(false, clicked.status, "launched, but ${clicked.message}",
-                launched.extra + mapOf("launched" to true, "clicked" to false))
+                launched.extra + clicked.extra + mapOf("launched" to true, "clicked" to false))
         )
     }
 
@@ -1912,6 +1920,8 @@ class PiPupService : Service(), WebServer.Handler {
         const val WATCHDOG_INTERVAL_MS = 30_000L
         /// /launch?click=: how long to wait for the button when no wait= is given (0.32.0)
         const val DEFAULT_LAUNCH_CLICK_WAIT = 10
+        const val METHOD_HINT = "method must be click (an accessibility click, the default) or tap " +
+            "(a touch on the centre of the view, for apps that ignore the click)"
         /// 0.29.0: one volume_changed push per burst of volume steps
         const val VOLUME_PUSH_DEBOUNCE_MS = 400L
         const val ONGOING_NOTIFICATION_ID = 123

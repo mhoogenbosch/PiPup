@@ -9,6 +9,26 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.32.0-beta.2] — 2026-11-09 (second test release for #83: tap, longer wait, `changed`)
+A **prerelease**, like beta.1: neither the app's own updater nor ha-pipup offers it. Install it with
+`install.sh` from the release. After @Ltek's test on a TCL (Android 11) with the new Plex app.
+### Added
+- **`method=tap` on `/click` and `/launch?click=`**: a short touch on the centre of the view that was
+  found (`dispatchGesture`, Android 7+), for apps whose buttons accept the accessibility click and then do
+  nothing. Plex (React Native) is one: `action-button-watch` was found and "clicked", but the film only
+  started with a real touch or the OK key. `method=click` (the accessibility click) stays the default. The
+  control service now declares `canPerformGestures`; it taps only the view it found, only while the
+  request runs, under the same list. `/state.control.tap` says whether it may. A service switched on
+  before this version may need switching off and on (`install.sh --click`) to get the gesture capability;
+  `/click?method=tap` then answers 501 with that hint.
+- **`changed` in the answer**: after a press the app watches the pressed view for up to 1.5 s and says
+  whether it left the screen, moved, or its app left the front (`true`), or nothing happened to it
+  (`false`). A hint, not proof: a button that only changes its own label reads as `false`. The answer also
+  says which `method` was used.
+### Changed
+- **`wait` goes up to 30 s** (was 15) on `/click` and `/launch`: a cold start of Plex (logo, profile
+  screen) took longer than 10 s.
+
 ## [v0.32.0-beta.1] — 2026-11-08 (test release for #83: what plays, seeking, pressing a button)
 A **prerelease**: neither the app's own updater nor ha-pipup offers it. Install it with `install.sh`
 from the release.
@@ -810,6 +830,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v0.32.0-beta.2]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.2
 [v0.32.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.1
 [v0.31.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.31.0
 [v0.30.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.30.1
