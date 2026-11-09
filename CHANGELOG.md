@@ -18,9 +18,11 @@ A **prerelease**, like beta.1: neither the app's own updater nor ha-pipup offers
   nothing. Plex (React Native) is one: `action-button-watch` was found and "clicked", but the film only
   started with a real touch or the OK key. `method=click` (the accessibility click) stays the default. The
   control service now declares `canPerformGestures`; it taps only the view it found, only while the
-  request runs, under the same list. `/state.control.tap` says whether it may. A service switched on
-  before this version may need switching off and on (`install.sh --click`) to get the gesture capability;
-  `/click?method=tap` then answers 501 with that hint.
+  request runs, under the same list. `/state.control.tap` says whether it may.
+  **Coming from beta.1, run `install.sh --click <apps>` once more**: after an app update Android keeps
+  binding an already enabled service with the old version's capabilities (tested: `tap: false` after the
+  update, `true` after switching it off and on). `--click` now does that switch itself when the service
+  is already on; until then `/click?method=tap` answers 501 with that hint.
 - **`changed` in the answer**: after a press the app watches the pressed view for up to 1.5 s and says
   whether it left the screen, moved, or its app left the front (`true`), or nothing happened to it
   (`false`). A hint, not proof: a button that only changes its own label reads as `false`. The answer also
@@ -28,6 +30,13 @@ A **prerelease**, like beta.1: neither the app's own updater nor ha-pipup offers
 ### Changed
 - **`wait` goes up to 30 s** (was 15) on `/click` and `/launch`: a cold start of Plex (logo, profile
   screen) took longer than 10 s.
+- **The control service sees the same views as `uiautomator dump`**, where people look up the ids
+  (`flagIncludeNotImportantViews`, also set at runtime so an update needs no restart for it). Before, a
+  view Android marks "not important for accessibility" could not be found, such as SmartTube's
+  `main_image`, while the dump listed it.
+- Tested on the Fire TV Stick 4K Max (Fire OS 7, Android 9): `method=tap` on SmartTube's play button
+  started playback (a touch works there without a touchscreen), `changed` was `false` (the button stayed)
+  and `true` after opening a video; 400 for `method=press` and `wait=31`.
 
 ## [v0.32.0-beta.1] — 2026-11-08 (test release for #83: what plays, seeking, pressing a button)
 A **prerelease**: neither the app's own updater nor ha-pipup offers it. Install it with `install.sh`

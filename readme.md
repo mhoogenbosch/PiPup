@@ -1007,7 +1007,7 @@ press worked. A press that changes nothing answers about 1.5 s later than one th
 | 404 | the app is not on screen, or the view did not appear within `wait` |
 | 409 | another click is still running (one at a time) |
 | 500 | the view was found, but the app refused the click, or Android refused the tap |
-| 501 | the control service is not switched on; for `tap` also: Android older than 7, or a service switched on before 0.32.0-beta.2 that has not been restarted (switch it off and on: `install.sh --click`) |
+| 501 | the control service is not switched on; for `tap` also: Android older than 7, or a service switched on before 0.32.0-beta.2 and not restarted since (run `install.sh --click <apps>` again: it switches the service off and on) |
 
 **Off until you switch it on, and only in the apps you list.** Clicking runs in a separate
 accessibility service, "PiPup control"; the screen-off service keeps observing nothing. Both the service

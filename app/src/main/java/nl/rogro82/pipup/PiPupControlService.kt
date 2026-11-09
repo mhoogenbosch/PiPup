@@ -43,8 +43,20 @@ class PiPupControlService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // 0.32.0-beta.2: also the views Android marks "not important for accessibility", so every
+        // id that `uiautomator dump` shows can be found. Set here as well as in the XML: after an
+        // app update Android keeps binding an enabled service with its old flags (and capabilities;
+        // those cannot be set at runtime, hence `install.sh --click` switching it off and on).
+        try {
+            serviceInfo?.let {
+                it.flags = it.flags or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                serviceInfo = it
+            }
+        } catch (ex: Throwable) {
+            Log.w(LOG_TAG, "could not include unimportant views: ${ex.message}")
+        }
         instance = this
-        Log.i(LOG_TAG, "Control service connected")
+        Log.i(LOG_TAG, "Control service connected (tap: ${canTap()})")
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {

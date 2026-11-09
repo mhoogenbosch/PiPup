@@ -250,6 +250,13 @@ foreach ($device in $Devices) {
     # The list can only be set like this (adb), never over the LAN.
     $clickList = $null
     if ($Click) {
+        $current = ((adb -s $target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
+        if (Test-Component $current $ControlComponent) {
+            # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
+            # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
+            Disable-Accessibility $target $ControlComponent 'control service (click), restarting:'
+            Start-Sleep -Seconds 2
+        }
         Enable-Accessibility $target $ControlComponent 'control service (click)'
         $clickList = $Click
     } elseif ($NoClick) {

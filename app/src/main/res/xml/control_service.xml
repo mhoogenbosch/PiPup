@@ -6,10 +6,13 @@
      answers nothing but whether the click happened.
      canPerformGestures (0.32.0-beta.2): for method=tap, a short touch on the centre of the view
      that was found, for apps that ignore ACTION_CLICK (Plex). It taps only there, only while a
-     /click request runs, under the same list. -->
+     /click request runs, under the same list.
+     flagIncludeNotImportantViews (0.32.0-beta.2): see the same views as `uiautomator dump`, where
+     people look up the ids; without it an image without a description (SmartTube's main_image)
+     could not be found. Set again at runtime in onServiceConnected, see there. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
         android:accessibilityFeedbackType="feedbackGeneric"
-        android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+        android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
         android:canPerformGestures="true"
         android:canRetrieveWindowContent="true"
         android:description="@string/control_service_description"

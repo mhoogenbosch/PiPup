@@ -279,6 +279,13 @@ for device in "${DEVICES[@]}"; do
     # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
     # The list can only be set like this (adb), never over the LAN.
     if [ "$CLICK_SET" -eq 1 ]; then
+        current=$(adb -s "$target" shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r')
+        if has_component "$current" "$CONTROL_COMPONENT"; then
+            # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
+            # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
+            disable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click), restarting:"
+            sleep 2
+        fi
         enable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click)"
     elif [ "$NO_CLICK" -eq 1 ]; then
         disable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click)"
