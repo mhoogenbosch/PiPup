@@ -78,6 +78,13 @@ function Test-Component {
     return @($List -split ':') -contains $Component -or @($List -split ':') -contains $short
 }
 
+# The entries of a ':'-separated list, without empty and "null" ones: `settings get` prints
+# null when the setting is unset, and a hand-written append (readme before 0.32.0) kept it.
+function Get-Components {
+    param([string]$List)
+    return @(@($List -split ':') | Where-Object { $_ -and $_ -ne 'null' })
+}
+
 function Enable-Accessibility {
     param([string]$Target, [string]$Component, [string]$Label)
     $current = ((adb -s $Target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
@@ -85,7 +92,7 @@ function Enable-Accessibility {
         Write-Ok "$Label already enabled"
         return
     }
-    $merged = if ($current -and $current -ne 'null') { "${current}:$Component" } else { $Component }
+    $merged = (@(Get-Components $current) + $Component) -join ':'
     adb -s $Target shell "settings put secure enabled_accessibility_services $merged" | Out-Null
     adb -s $Target shell 'settings put secure accessibility_enabled 1' | Out-Null
     Write-Ok "$Label enabled"
@@ -99,7 +106,7 @@ function Disable-Accessibility {
         return
     }
     $short = $Component.Replace("/$Package.", '/.')
-    $kept = (@($current -split ':') | Where-Object { $_ -ne $Component -and $_ -ne $short }) -join ':'
+    $kept = (@(Get-Components $current) | Where-Object { $_ -ne $Component -and $_ -ne $short }) -join ':'
     if ($kept) {
         adb -s $Target shell "settings put secure enabled_accessibility_services $kept" | Out-Null
     } else {

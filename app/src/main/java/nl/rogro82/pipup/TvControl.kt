@@ -105,14 +105,20 @@ object TvControl {
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
 
-        val woke = wake && !PowerController.screenOn(context) && PowerController.wake(context)
+        // 0.32.0-beta.3: "woke" only when the screen really came on (within 3 s); the
+        // attempt alone said yes on a TCL whose screen stayed off. The app is opened either
+        // way, and the answer's screenOn tells the caller to wake it another way (adb).
+        val wasOff = wake && !PowerController.screenOn(context)
+        val woke = wasOff && PowerController.wake(context) && PowerController.waitForScreen(context, true)
+        if (wasOff && !woke) Log.w(LOG_TAG, "the screen stayed off after the wake attempt")
         return try {
             context.startActivity(intent)
             val started = intent.`package` ?: intent.component?.packageName ?: pkg
             lastLaunched = started
             lastLaunchedAt = SystemClock.elapsedRealtime()
             Log.i(LOG_TAG, "launched ${started ?: uri}" + if (woke) " (woke the screen first)" else "")
-            Result(true, 200, "launched", mapOf("package" to started, "uri" to uri, "woke" to woke))
+            Result(true, 200, "launched", mapOf("package" to started, "uri" to uri, "woke" to woke,
+                "screenOn" to PowerController.screenOn(context)))
         } catch (ex: ActivityNotFoundException) {
             Result(false, 404, "nothing handles ${uri ?: pkg}")
         } catch (ex: Throwable) {

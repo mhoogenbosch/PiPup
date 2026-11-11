@@ -9,6 +9,29 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.32.0-beta.3] — 2026-11-11 (third test release for #83: `method=ok`, honest tap, wake check)
+A **prerelease**, like beta.1 and beta.2. After @Ltek's test of beta.2 on a TCL (Android 11).
+### Added
+- **`method=ok` on `/click` and `/launch?click=`**: give the view the input focus, check that it has it,
+  then press OK, the way the remote does. Android 13+ presses OK itself (`GLOBAL_ACTION_DPAD_CENTER`);
+  below Android 13 an app cannot, so the answer says `"pressed": false, "key": "KEYCODE_DPAD_CENTER"` and
+  the caller presses it over adb (ha-pipup does). Nothing is pressed when the view does not take the focus.
+  `/state.control.okPressedBy` says `app` or `adb`.
+### Fixed
+- **`method=tap` is honest about where it cannot work.** Android drops a tap from an app on Android 11
+  without a touchscreen and on Android 12+ without `android.hardware.faketouch` (AOSP
+  `AccessibilityServiceConnection.dispatchGesture`): on the TCL every tap came back "cancelled". Most TVs
+  have neither; Android 7–10 (Fire OS 7) deliver taps. `/state.control.tap` is now `false` there,
+  `/state.control.tapUnavailable` says why, and `/click?method=tap` answers 501 with that reason
+  instead of 500 after trying.
+- **Waking is checked.** `/launch` answered `woke: true` as soon as the wake attempt was made, while the
+  TCL's screen stayed off. `/launch` and `/power?state=on|off` now wait up to 3 s for the screen and
+  answer what happened: `/launch` `woke` (did it come on) and `screenOn`, `/power` `reached` and
+  `screenOn`. `ok` on `/power` stays "the attempt was made".
+- **`null:` in `enabled_accessibility_services`**: the readme's hand-written append kept the `null` that
+  `settings get` prints for an empty setting (`null:nl.rogro82.pipup/…`). Fixed in the readme;
+  `install.sh`/`install.ps1` drop such entries when they change the list. Harmless before: Android skips it.
+
 ## [v0.32.0-beta.2] — 2026-11-09 (second test release for #83: tap, longer wait, `changed`)
 A **prerelease**, like beta.1: neither the app's own updater nor ha-pipup offers it. Install it with
 `install.sh` from the release. After @Ltek's test on a TCL (Android 11) with the new Plex app.
@@ -839,6 +862,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v0.32.0-beta.3]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.3
 [v0.32.0-beta.2]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.2
 [v0.32.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.1
 [v0.31.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.31.0

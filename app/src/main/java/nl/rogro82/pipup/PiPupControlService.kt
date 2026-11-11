@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
@@ -36,6 +38,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /// (dispatchGesture, Android 7+), for apps whose buttons take ACTION_CLICK but ignore it, such
 /// as Plex (React Native). After a press it watches the pressed view for up to 1.5 s and
 /// answers `changed`: whether it left the screen, moved, or its app left the front.
+///
+/// Taps only reach the app where Android lets them (0.32.0-beta.3, #83): Android 7-10 always,
+/// Android 11 only on a display with a touchscreen, Android 12+ only on a device that declares
+/// `android.hardware.faketouch` (AccessibilityServiceConnection.dispatchGesture). Most TVs have
+/// neither, and there the tap comes back cancelled; [canTap] says so up front. For those there
+/// is **ok**: give the view the focus, then press OK, as the remote would - the app itself on
+/// Android 13+ (GLOBAL_ACTION_DPAD_CENTER), else the caller sends KEYCODE_DPAD_CENTER over adb
+/// (ha-pipup does).
 ///
 ///     adb shell settings put secure enabled_accessibility_services \
 ///         <current value>:nl.rogro82.pipup/nl.rogro82.pipup.PiPupControlService
@@ -137,6 +147,9 @@ class PiPupControlService : AccessibilityService() {
         /// After a press, how long to watch the pressed view for `changed`.
         private const val CHANGE_WATCH_MS = 1500L
         private const val TAP_DURATION_MS = 50L
+        /// method=ok: how long the view may take to report the focus it was given
+        private const val FOCUS_WAIT_MS = 600L
+        private const val FOCUS_POLL_MS = 50L
         private const val TAP_TIMEOUT_MS = 2000L
         /// A TV screen has a few hundred nodes; this only bounds a pathological tree.
         private const val MAX_NODES = 5000
@@ -151,18 +164,46 @@ class PiPupControlService : AccessibilityService() {
 
         fun connected(): Boolean = instance != null
 
-        /// Whether a tap can be sent: service on, Android 7+, and the gesture capability
-        /// granted (a service switched on before 0.32.0-beta.2 may need a restart for it).
-        fun canTap(): Boolean {
-            val service = instance ?: return false
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
-            return try {
+        /// Whether a tap can be sent: service on, Android 7+, the gesture capability granted
+        /// (a service switched on before 0.32.0-beta.2 may need a restart for it), and a
+        /// device where Android delivers taps from an app at all (see [noTouchReason]).
+        fun canTap(): Boolean = tapUnavailableReason() == null
+
+        /// Why method=tap cannot work here, or null when it can.
+        fun tapUnavailableReason(): String? {
+            val service = instance ?: return "the control service is off"
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return "tapping needs Android 7 or newer"
+            noTouchReason(service)?.let { return it }
+            val granted = try {
                 val capabilities = service.serviceInfo?.capabilities ?: 0
                 (capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES) != 0
             } catch (_: Throwable) {
                 false
             }
+            return if (granted) null else "the control service may not tap yet: switch it off and " +
+                "on again (install.sh --click <app>, or the click option in ha-pipup)"
         }
+
+        /// 0.32.0-beta.3: Android drops a tap from an app before it reaches the screen
+        /// unless the device has touch input - Android 11 checks the display's touchscreen,
+        /// 12+ the faketouch feature. The tap then comes back "cancelled" (TCL, Android 11).
+        private fun noTouchReason(context: Context): String? {
+            val hint = "; use method=ok (focus the view and press OK) instead"
+            return when {
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.R -> null
+                Build.VERSION.SDK_INT == Build.VERSION_CODES.R ->
+                    if (context.resources.configuration.touchscreen == Configuration.TOUCHSCREEN_FINGER) null
+                    else "this TV has no touchscreen, and Android 11 drops taps from apps there$hint"
+                else ->
+                    if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_FAKETOUCH)) null
+                    else "this TV has no touch input (no android.hardware.faketouch), and Android " +
+                        "12+ drops taps from apps there$hint"
+            }
+        }
+
+        /// Who presses OK for method=ok: the app on Android 13+, else the caller over adb.
+        fun okPressedBy(): String =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) "app" else "adb"
 
         /// Press the view [id] of [pkg], waiting up to [waitSeconds] for it to appear.
         /// Runs on the calling (HTTP worker) thread; accessibility calls are binder calls
@@ -181,11 +222,10 @@ class PiPupControlService : AccessibilityService() {
                 return TvControl.Result(false, 501, "clicking needs the PiPup control service " +
                     "(install.sh --click $pkg, or the click option in ha-pipup)")
             }
-            if (method == ClickMethod.TAP && !canTap()) {
-                return TvControl.Result(false, 501,
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) "tapping needs Android 7 or newer"
-                    else "the control service may not tap yet: switch it off and on again " +
-                        "(install.sh --click $pkg, or the click option in ha-pipup)")
+            if (method == ClickMethod.TAP) {
+                tapUnavailableReason()?.let {
+                    return TvControl.Result(false, 501, it.replace("<app>", pkg), mapOf("method" to method.wire))
+                }
             }
             if (!ClickPolicy.allowed(context, pkg)) {
                 return TvControl.Result(false, 403, "$pkg is not on the list of apps PiPup may press " +
@@ -216,6 +256,7 @@ class PiPupControlService : AccessibilityService() {
                     if (node != null) {
                         val target = clickTarget(node)
                         val before = Rect().also { node.getBoundsInScreen(it) }
+                        if (method == ClickMethod.OK) return pressOk(service, pkg, id, node, before)
                         val refused: String? = when (method) {
                             ClickMethod.CLICK -> {
                                 val ok = try {
@@ -229,6 +270,7 @@ class PiPupControlService : AccessibilityService() {
                             ClickMethod.TAP ->
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) service.tap(node, target)
                                 else "tapping needs Android 7 or newer"
+                            ClickMethod.OK -> null // handled above
                         }
                         if (refused != null) {
                             Log.i(LOG_TAG, "${method.wire} $pkg $id: $refused")
@@ -248,6 +290,77 @@ class PiPupControlService : AccessibilityService() {
             return if (inFront) TvControl.Result(false, 404, "$id not found in $pkg$waited")
                    else TvControl.Result(false, 404, "$pkg is not on screen$waited")
         }
+
+        /// method=ok (0.32.0-beta.3): give the view (or its nearest focusable parent) the input
+        /// focus, check that it has it, then press OK - the app on Android 13+, else the answer
+        /// says `pressed: false, key: KEYCODE_DPAD_CENTER` and the caller presses it over adb.
+        /// Nothing is pressed when the focus did not land on the view: OK would then press
+        /// whatever does have it.
+        private fun pressOk(
+            service: PiPupControlService, pkg: String, id: String,
+            node: AccessibilityNodeInfo, before: Rect
+        ): TvControl.Result {
+            val wire = ClickMethod.OK.wire
+            val target = focusTarget(node)
+            if (!focus(target)) {
+                Log.i(LOG_TAG, "ok $pkg $id: the view would not take the focus")
+                return TvControl.Result(false, 500, "$id was found, but it would not take the focus, " +
+                    "so OK was not pressed", mapOf("method" to wire, "focused" to false, "pressed" to false))
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                Log.i(LOG_TAG, "ok $pkg $id: focused; OK is up to the caller (adb)")
+                return TvControl.Result(true, 200, "focused $id; press OK (KEYCODE_DPAD_CENTER) to " +
+                    "finish - before Android 13 only adb can", mapOf("method" to wire, "focused" to true,
+                    "pressed" to false, "key" to "KEYCODE_DPAD_CENTER"))
+            }
+            val pressed = try {
+                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_DPAD_CENTER)
+            } catch (ex: Throwable) {
+                Log.w(LOG_TAG, "OK on $id failed: ${ex.message}")
+                false
+            }
+            if (!pressed) {
+                Log.i(LOG_TAG, "ok $pkg $id: Android refused the OK press")
+                return TvControl.Result(false, 500, "$id has the focus, but Android refused the OK press",
+                    mapOf("method" to wire, "focused" to true, "pressed" to false))
+            }
+            val changed = watchForChange(pkg, node, before)
+            Log.i(LOG_TAG, "ok $pkg $id: done, changed=$changed")
+            return TvControl.Result(true, 200, "pressed OK on $id",
+                mapOf("method" to wire, "focused" to true, "pressed" to true, "changed" to changed))
+        }
+
+        /// The node itself when it can take the input focus, else its nearest ancestor that
+        /// can (a label inside a button); the node itself when none can.
+        private fun focusTarget(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+            var current: AccessibilityNodeInfo? = node
+            var hops = 0
+            while (current != null && hops <= MAX_PARENT_HOPS) {
+                if (current.isFocusable) return current
+                current = current.parent
+                hops++
+            }
+            return node
+        }
+
+        /// Give [node] the input focus and wait (up to FOCUS_WAIT_MS) until it reports it.
+        private fun focus(node: AccessibilityNodeInfo): Boolean {
+            if (fresh(node) && node.isFocused) return true
+            try {
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            } catch (ex: Throwable) {
+                Log.w(LOG_TAG, "focus failed: ${ex.message}")
+                return false
+            }
+            val deadline = SystemClock.elapsedRealtime() + FOCUS_WAIT_MS
+            while (true) {
+                if (fresh(node) && node.isFocused) return true
+                if (SystemClock.elapsedRealtime() >= deadline) return false
+                try { Thread.sleep(FOCUS_POLL_MS) } catch (_: InterruptedException) { return false }
+            }
+        }
+
+        private fun fresh(node: AccessibilityNodeInfo): Boolean = try { node.refresh() } catch (_: Throwable) { false }
 
         /// After a press: whether the pressed [node] left the screen, moved away from [before],
         /// or its app left the front within CHANGE_WATCH_MS. A hint, not proof: a press that
@@ -325,8 +438,11 @@ enum class ClickMethod(val wire: String) {
     /// ACTION_CLICK through accessibility: native views and Jetpack Compose.
     CLICK("click"),
     /// A short touch on the centre of the view (Android 7+), for apps that take ACTION_CLICK
-    /// but ignore it, such as Plex (React Native).
-    TAP("tap");
+    /// but ignore it, such as Plex (React Native). Only on devices with touch input.
+    TAP("tap"),
+    /// Focus the view, then press OK (0.32.0-beta.3): what the remote does, so it works on TVs
+    /// without touch input. Android 13+ presses OK itself; below that the caller does (adb).
+    OK("ok");
 
     companion object {
         /// Absent or blank = CLICK; an unknown name = null, which the caller answers with 400.

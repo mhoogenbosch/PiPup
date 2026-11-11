@@ -131,6 +131,9 @@ class MediaClickTest {
         assertEquals(ClickMethod.CLICK, ClickMethod.parse("click"))
         assertEquals(ClickMethod.TAP, ClickMethod.parse("tap"))
         assertEquals(ClickMethod.TAP, ClickMethod.parse(" TAP "))
+        assertEquals(ClickMethod.OK, ClickMethod.parse("ok"))
+        assertEquals(ClickMethod.OK, ClickMethod.parse("OK"))
+        assertEquals("ok", ClickMethod.OK.wire)
         assertNull(ClickMethod.parse("press"))
         assertNull(ClickMethod.parse("tap;rm"))
     }

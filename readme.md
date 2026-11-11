@@ -390,8 +390,11 @@ A second owner whose TCL had been dropping off for weeks went from 500 to 100 wi
 switch off every other accessibility service on the set:
 
 ```
-adb shell 'cur=$(settings get secure enabled_accessibility_services); settings put secure enabled_accessibility_services "${cur:+$cur:}nl.rogro82.pipup/nl.rogro82.pipup.PiPupAccessibilityService"; settings put secure accessibility_enabled 1'
+adb shell 'cur=$(settings get secure enabled_accessibility_services); [ "$cur" = null ] && cur=; settings put secure enabled_accessibility_services "${cur:+$cur:}nl.rogro82.pipup/nl.rogro82.pipup.PiPupAccessibilityService"; settings put secure accessibility_enabled 1'
 ```
+
+(`settings get` prints `null` when nothing is enabled yet; before 0.32.0 this snippet kept that as an
+entry, `null:nl.rogro82.pipup/…`. Harmless — Android skips it — and `install.sh` removes it.)
 
 Like every grant it survives updates via `install.sh`, which re-applies it. The two mechanisms below are
 what you are up against without it, and how to recover a TV that is already stuck.
@@ -943,7 +946,7 @@ this device cannot do it, 400 for a malformed request.
 | `/launch` | POST | `package=<name>` and/or `uri=<deep link>`; `wake=false` to leave a sleeping screen off |
 | `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back` |
 | `/volume` | GET / POST | one of `level=0-100`, `step=up\|down`, `mute=on\|off\|toggle`; `ui=false` hides the volume bar |
-| `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-30 s>`, `method=click\|tap` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (0.32.0) |
+| `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-30 s>`, `method=click\|tap\|ok` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (0.32.0) |
 | `/media` | GET | what is playing, in any app — see [Media sessions](#media-sessions) (0.32.0) |
 | `/media/seek` | POST | `ms=<position>` or `by=<+/- ms>`, optionally `package=` (0.32.0) |
 
@@ -976,9 +979,9 @@ Since 0.32.0 (#83). A deep link often stops on a title's page: Plex's `plex://�
 does not start it. `/click` presses a button there, the way the remote's OK would:
 
 ```
-curl -X POST "http://tv:7979/click?package=com.plexapp.android&id=action-button-watch&wait=5&method=tap"
+curl -X POST "http://tv:7979/click?package=com.plexapp.android&id=action-button-watch&wait=5&method=ok"
 # or in one call: open the page, wait for the button (10 s by default, up to 30), press it
-curl -X POST "http://tv:7979/launch?package=com.plexapp.android&uri=plex://…&click=action-button-watch&method=tap&wait=30"
+curl -X POST "http://tv:7979/launch?package=com.plexapp.android&uri=plex://…&click=action-button-watch&method=ok&wait=30"
 ```
 
 `id` is the view's resource id: the full form (`com.app:id/play`), the bare name (`play`), or a Jetpack
@@ -988,8 +991,17 @@ Compose test tag (`action-button-watch`). Find it with `adb shell uiautomator du
 `method` (since 0.32.0-beta.2) chooses how the button is pressed:
 - `click` (the default): an accessibility click. Works in apps built with Android views or Jetpack Compose.
 - `tap`: a short touch on the centre of the view that was found (Android 7+). For apps whose buttons
-  accept the accessibility click and then do nothing, such as **Plex** (React Native): there
-  `action-button-watch` only starts the film with `method=tap`.
+  accept the accessibility click and then do nothing, such as **Plex** (React Native). **Only on devices
+  with touch input**: Android drops a tap from an app before it reaches the screen on Android 11 without
+  a touchscreen, and on Android 12+ without the `android.hardware.faketouch` feature — most TVs (a TCL
+  and a SHIELD on Android 11 answered "the tap was cancelled"). Android 7–10, such as Fire OS 7, deliver
+  it. `/state.control.tap` is `false` where it cannot work, and `tapUnavailable` says why.
+- `ok` (since 0.32.0-beta.3): give the view the input focus, check that it has it, then press OK — what
+  the remote does, so it works on any TV. Android 13+ presses OK itself. **Below Android 13 an app cannot
+  press OK**: the answer is then `"pressed": false, "key": "KEYCODE_DPAD_CENTER"` and the caller presses
+  it, `adb shell input keyevent KEYCODE_DPAD_CENTER` (ha-pipup does that over its ADB connection).
+  `/state.control.okPressedBy` says `app` or `adb`. When the view does not take the focus, nothing is
+  pressed (OK would press whatever has it).
 
 `wait` is how long to wait for the view to appear, 0–30 s (15 before 0.32.0-beta.2). A cold start of
 Plex, with its logo and profile screen, can take over 10 s.
@@ -1001,13 +1013,13 @@ press worked. A press that changes nothing answers about 1.5 s later than one th
 
 | Status | Meaning |
 |---|---|
-| 200 | `{"ok": true, "message": "tapped action-button-watch", "method": "tap", "changed": true}` (after `/launch`: also `launched`, `clicked`) |
-| 400 | `package` or `id` missing, `wait` outside 0–30, or `method` other than `click`/`tap` |
+| 200 | `{"ok": true, "message": "tapped action-button-watch", "method": "tap", "changed": true}` (after `/launch`: also `launched`, `clicked`); `method=ok` adds `focused` and `pressed` (and `key` when the caller has to press OK) |
+| 400 | `package` or `id` missing, `wait` outside 0–30, or `method` other than `click`/`tap`/`ok` |
 | 403 | the app is not on the list of apps PiPup may press in |
 | 404 | the app is not on screen, or the view did not appear within `wait` |
 | 409 | another click is still running (one at a time) |
-| 500 | the view was found, but the app refused the click, or Android refused the tap |
-| 501 | the control service is not switched on; for `tap` also: Android older than 7, or a service switched on before 0.32.0-beta.2 and not restarted since (run `install.sh --click <apps>` again: it switches the service off and on) |
+| 500 | the view was found, but the app refused the click, Android refused or cancelled the tap, or (`ok`) the view would not take the focus |
+| 501 | the control service is not switched on; for `tap` also: no touch input on this device, Android older than 7, or a service switched on before 0.32.0-beta.2 and not restarted since (run `install.sh --click <apps>` again: it switches the service off and on) |
 
 **Off until you switch it on, and only in the apps you list.** Clicking runs in a separate
 accessibility service, "PiPup control"; the screen-off service keeps observing nothing. Both the service
@@ -1018,7 +1030,8 @@ and the list of apps are set over adb only, never over the network:
 ./install.sh --no-click <tv-ip>     # off again, list cleared
 ```
 
-or by hand (keep any services already in the setting):
+or by hand (keep any services already in the setting; when `settings get` prints `null`, leave
+`<current>:` out):
 
 ```
 adb shell settings put secure enabled_accessibility_services <current>:nl.rogro82.pipup/nl.rogro82.pipup.PiPupControlService

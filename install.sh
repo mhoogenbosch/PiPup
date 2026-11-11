@@ -110,6 +110,12 @@ has_component() {
     return 1
 }
 
+# A component list without empty and "null" entries. `settings get` prints null when the
+# setting is unset, and a hand-written append (readme before 0.32.0) kept it: null:pkg/...
+clean_components() {
+    printf '%s' "$1" | tr ':' '\n' | grep -vx -e '' -e 'null' | paste -sd: -
+}
+
 # Add accessibility service $2 (label $3) to the enabled list on device $1.
 enable_accessibility() {
     local current merged
@@ -118,9 +124,10 @@ enable_accessibility() {
         ok "$3 already enabled"
         return
     fi
+    current=$(clean_components "$current")
     case "$current" in
-        null|"") merged="$2" ;;
-        *)       merged="$current:$2" ;;
+        "") merged="$2" ;;
+        *)  merged="$current:$2" ;;
     esac
     adb -s "$1" shell "settings put secure enabled_accessibility_services $merged" >/dev/null 2>&1
     adb -s "$1" shell "settings put secure accessibility_enabled 1" >/dev/null 2>&1
@@ -136,7 +143,7 @@ disable_accessibility() {
         return
     fi
     short="${2/\/$PACKAGE./\/.}"
-    kept=$(printf '%s' "$current" | tr ':' '\n' | grep -vxF -e "$2" -e "$short" | paste -sd: -)
+    kept=$(clean_components "$current" | tr ':' '\n' | grep -vxF -e "$2" -e "$short" | paste -sd: -)
     if [ -z "$kept" ]; then
         adb -s "$1" shell "settings delete secure enabled_accessibility_services" >/dev/null 2>&1
     else

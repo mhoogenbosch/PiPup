@@ -1308,8 +1308,12 @@ class PiPupService : Service(), WebServer.Handler {
             "lastLaunchedSecondsAgo" to TvControl.lastLaunchedSecondsAgo(),
             // 0.32.0 (#83): POST /click works (control service on) and in which apps
             "click" to PiPupControlService.connected(),
-            // 0.32.0-beta.2: method=tap can be used (Android 7+, gesture capability granted)
+            // 0.32.0-beta.2: method=tap can be used (Android 7+, gesture capability granted);
+            // 0.32.0-beta.3: and Android delivers taps here at all (touch input), else why not
             "tap" to PiPupControlService.canTap(),
+            "tapUnavailable" to (if (PiPupControlService.connected()) PiPupControlService.tapUnavailableReason() else null),
+            // 0.32.0-beta.3: method=ok; who presses OK after the focus: "app" (Android 13+) or "adb"
+            "okPressedBy" to PiPupControlService.okPressedBy(),
             "clickPackages" to ClickPolicy.packages(this)
         )
         // 0.32.0 (#83): what is playing, in any app; {"access": false, "reason"} without the grant
@@ -1406,14 +1410,18 @@ class PiPupService : Service(), WebServer.Handler {
 
         val method = if (target) "activity" else PowerController.sleepMethod(this)
         val ok = if (target) PowerController.wake(this) else PowerController.sleep(this)
+        // 0.32.0-beta.3 (#83): wait (up to 3 s) until the screen got there, so screenOn is the
+        // outcome rather than the state before it; `reached` says whether it did. ok stays
+        // "the attempt was made", as before.
+        val reached = ok && PowerController.waitForScreen(this, target)
 
-        Log.d(LOG_TAG, "Power ${if (target) "on" else "off"} via ${method ?: "-"}: ok=$ok")
+        Log.d(LOG_TAG, "Power ${if (target) "on" else "off"} via ${method ?: "-"}: ok=$ok reached=$reached")
 
         val body = Json.writeValueAsString(mapOf(
             "state" to if (target) "on" else "off",
             "ok" to ok,
             "method" to method,
-            // the wake activity is still starting up, so this can lag one poll behind
+            "reached" to reached,
             "screenOn" to PowerController.screenOn(this)
         ))
         return newFixedLengthResponse(
@@ -1467,7 +1475,8 @@ class PiPupService : Service(), WebServer.Handler {
     }
 
     /// POST /click (0.32.0, #83): press the view `id` of `package`; `method=tap` (0.32.0-beta.2)
-    /// touches its centre instead, for apps that ignore an accessibility click.
+    /// touches its centre instead, for apps that ignore an accessibility click; `method=ok`
+    /// (0.32.0-beta.3) focuses it and presses OK (Android 13+; below, the caller presses OK).
     private fun clickResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
         val wait = waitSeconds(session, default = 0) ?: return controlResponse(TvControl.Result(false, 400,
             "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
@@ -1920,8 +1929,9 @@ class PiPupService : Service(), WebServer.Handler {
         const val WATCHDOG_INTERVAL_MS = 30_000L
         /// /launch?click=: how long to wait for the button when no wait= is given (0.32.0)
         const val DEFAULT_LAUNCH_CLICK_WAIT = 10
-        const val METHOD_HINT = "method must be click (an accessibility click, the default) or tap " +
-            "(a touch on the centre of the view, for apps that ignore the click)"
+        const val METHOD_HINT = "method must be click (an accessibility click, the default), tap " +
+            "(a touch on the centre of the view, on devices with touch input) or ok (focus the view " +
+            "and press OK, as the remote does)"
         /// 0.29.0: one volume_changed push per burst of volume steps
         const val VOLUME_PUSH_DEBOUNCE_MS = 400L
         const val ONGOING_NOTIFICATION_ID = 123
