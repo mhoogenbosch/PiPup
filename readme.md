@@ -87,7 +87,8 @@ streams) on your TV from your home-automation system, for **as long as you want*
 - **Poster** (since 0.17.0) — an optional `poster` (image URL) on `video` and `web` media: a still
   (e.g. a camera snapshot) shown over the stream area the moment the popup appears and faded out on
   the stream's first rendered frame. A live popup never opens as an empty box while the RTSP handshake
-  or WebView start-up runs; the stream area takes the poster's aspect, so still and live line up. If the
+  or WebView start-up runs. Optional `posterMode` controls how the image fits the requested
+  stream area without resizing it; omit it to keep poster-driven sizing. If the
   stream never paints the poster simply stays. On a web page that hosts a `<video>` (e.g. go2rtc's WebRTC
   viewer) the fade waits for actual playback (since 0.20.0), not for the page paint — so WebRTC + poster
   gives an instant still followed by near-realtime video. `/state.lastPopup.firstFrameMs` reports the time
@@ -240,7 +241,8 @@ picture and, for a stream nobody else pulls, the cold-start delay above.
 
 The poster (since 0.17.0) makes start-up time matter much less: a still of the same camera shows
 instantly and fades on the stream's first frame. For `whep` that moment comes from the app's own
-`<video>` element. For a `web` page the app injects a watcher: since 0.20.0 the poster waits until
+`<video>` element. Set `posterMode: "fit"` to keep the requested viewport when the snapshot
+has a different aspect from the video. For a `web` page the app injects a watcher: since 0.20.0 the poster waits until
 the page's video **actually plays** (not when the page paints), and since 0.20.1 there is no time limit
 once the page is seen to contain a `<video>`. Only a page where no video is ever found falls back to
 showing the page after 20 s.
@@ -586,6 +588,25 @@ match. If the poster fails to load nothing happens; if the stream never paints, 
 ```json
 { "video": { "uri": "rtsp://cam/sub", "width": 640, "poster": "http://frigate:5000/api/cam/latest.jpg" }}
 ```
+
+`posterMode` (optional, `video`, `web`, `whep`): controls the poster inside the requested media
+area. Any recognized value prevents the **poster** from resizing that area; it does not change
+live video scaling. For `video`, the first frame can still resize the area to the stream's display
+aspect. Set `width` and `height` to the desired video dimensions.
+
+| Value | Poster display |
+|---|---|
+| `fit` | Center the whole image, preserve aspect; unused space may remain |
+| `fill` | Fill the area, preserve aspect; crop the excess at the center |
+| `stretch` | Fill the area by stretching the image independently in each direction |
+| `center` | Center at the image's original size, without scaling; clip anything outside |
+| omitted or unrecognized | Preserve the existing poster sizing and stretching behavior |
+
+```json
+{ "whep": { "uri": "http://go2rtc:1984/api/webrtc?src=doorbell", "width": 640, "height": 360,
+  "poster": "http://frigate:5000/api/doorbell/latest.jpg", "posterMode": "fit" }}
+```
+
 `softwareDecoder` (since 0.17.2, video only, default *automatic*): `true` decodes in software and never
 touches the vendor hardware decoder; `false` forces the hardware decoder; absent = automatic — software on
 **Android < 8** and wherever an **Amlogic** H.264 decoder is present, hardware everywhere else. Reason: on
