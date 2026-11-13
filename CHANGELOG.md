@@ -9,6 +9,37 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.32.0-beta.4] — 2026-11-13 (fourth test release for #83: play and pause into the session, artwork)
+A **prerelease**, like the betas before. After @Ltek's test of beta.3 on a TCL (Android 11): waking,
+launching and navigating worked, but play and pause did nothing in Plex.
+### Changed
+- **Media keys go into the app's media session.** With media session access, `POST /key` with
+  `play`, `pause`, `play_pause`, `stop`, `next`, `previous`, `rewind` or `fast_forward` now calls the
+  session's transport controls (`MediaController.TransportControls`), the way a phone's media
+  notification controls an app. The media key event used until now reaches an app through
+  `MediaSession.Callback.onMediaButtonEvent`, which acts on a key only when the app lists that action in
+  its playback state. Without access it is still sent that way. `play_pause` becomes pause while
+  something plays and play otherwise. `package=` picks the app's session; the answer's `via` says
+  `session` or `media_key`.
+### Added
+- **`actions` in `/media`** (and `/state.media`): what the app says it accepts (`play`, `pause`,
+  `play_pause`, `stop`, `next`, `previous`, `seek`, `rewind`, `fast_forward`), for diagnosing.
+- **Artwork** (ha-pipup #61): `artKey` in `/media` changes with the picture (`null` = none), and
+  `GET /media/art` returns it as JPEG (PNG with transparency), at most 600 px, with header
+  `X-PiPup-Art-Key`. Bitmap or link from the session; a link is fetched by the app and never handed out.
+- **`posterMode`** on `video`, `web` and `whep` (#87, thanks @rshadow): `fit`, `fill`, `stretch` or
+  `center` scale the poster inside the requested area instead of letting it resize that area, so a
+  4:3 snapshot no longer turns a 16:9 viewport into 4:3. Without it nothing changes.
+### Fixed
+- **The automatic decoder choice no longer runs on the main thread** (ha-pipup #60). Every video popup
+  read the codec list there (`MediaCodecUtil`, a synchronized call); it is now read once, in the
+  background, when the service starts. On a MediaTek TCL (Android 8) with live TV running, stacked
+  video popups froze the app for good; whether this lock was the cause could not be checked here.
+  `softwareDecoder: true` stays the sure way out on such a TV.
+### Docs
+- WHEP: leaving out go2rtc's STUN servers on a LAN-only setup (`webrtc: ice_servers: []`) took the first
+  frame from about 5.8 s to 1.7 s for @ckegel72 (#86).
+
 ## [v0.32.0-beta.3] — 2026-11-11 (third test release for #83: `method=ok`, honest tap, wake check)
 A **prerelease**, like beta.1 and beta.2. After @Ltek's test of beta.2 on a TCL (Android 11).
 ### Added
@@ -862,6 +893,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v0.32.0-beta.4]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.4
 [v0.32.0-beta.3]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.3
 [v0.32.0-beta.2]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.2
 [v0.32.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.1

@@ -3,18 +3,28 @@ package nl.rogro82.pipup
 import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.Instant
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.roundToInt
 
-/// What is playing, in any app (0.32.0, #83): GET /media, POST /media/seek and `/state.media`.
+/// What is playing, in any app (0.32.0, #83): GET /media, POST /media/seek and `/state.media`;
+/// since 0.32.0-beta.4 also POST /key into the session and GET /media/art.
 ///
 /// Reads the active media sessions - the same sessions a Bluetooth remote's play button
 /// reaches - through MediaSessionManager. Android hands those to an app with an enabled
@@ -28,6 +38,16 @@ object MediaSessions {
     private const val SEEK_JUMP_MS = 2000L
     /// Session callbacks arrive in bursts (state + metadata + position); push once after them.
     private const val COALESCE_MS = 500L
+    /// GET /media/art: the longest side of the image handed out, and what is read at most.
+    private const val ART_MAX_PX = 600
+    private const val ART_MAX_BYTES = 8 * 1024 * 1024
+    private const val ART_TIMEOUT_MS = 5000
+
+    /// Where a session keeps its artwork: as a bitmap, or as a URI (in this order).
+    private val ART_BITMAP_KEYS = listOf(MediaMetadata.METADATA_KEY_ART,
+        MediaMetadata.METADATA_KEY_ALBUM_ART, MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+    private val ART_URI_KEYS = listOf(MediaMetadata.METADATA_KEY_ART_URI,
+        MediaMetadata.METADATA_KEY_ALBUM_ART_URI, MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI)
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -106,8 +126,157 @@ object MediaSessions {
                 ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE),
             artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST),
             album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM),
-            canSeek = ((state?.actions ?: 0L) and PlaybackState.ACTION_SEEK_TO) != 0L
+            canSeek = ((state?.actions ?: 0L) and PlaybackState.ACTION_SEEK_TO) != 0L,
+            actions = actionNames(state?.actions ?: 0L),
+            artKey = meta?.let { artKey(controller.packageName, it) }
         )
+    }
+
+    /// Identifies the session's artwork without reading it: the item plus where its image
+    /// lives. Changes when the picture does, so a controller fetches /media/art only then.
+    /// Null when the session has no artwork. The URI itself is not handed out: a media
+    /// server's artwork URL can carry its access token.
+    private fun artKey(pkg: String?, meta: MediaMetadata): String? {
+        val source = ART_BITMAP_KEYS.firstNotNullOfOrNull { key ->
+            runCatching { meta.getBitmap(key) }.getOrNull()?.let { "$key:${it.width}x${it.height}" }
+        } ?: ART_URI_KEYS.firstNotNullOfOrNull { key -> meta.getString(key)?.takeIf { it.isNotBlank() } }
+          ?: return null
+        val item = listOf(pkg, meta.getString(MediaMetadata.METADATA_KEY_TITLE),
+            meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE),
+            meta.getString(MediaMetadata.METADATA_KEY_ARTIST),
+            meta.getString(MediaMetadata.METADATA_KEY_ALBUM),
+            meta.getString(MediaMetadata.METADATA_KEY_MEDIA_ID), source).joinToString("|")
+        return "%08x".format(item.hashCode())
+    }
+
+    /// The session a request is about: that of [pkg], else the one /media reports.
+    /// Null result = no access; a [TvControl.Result] = the reason there is no session.
+    private fun sessionFor(context: Context, pkg: String?): Pair<MediaController?, TvControl.Result?>? {
+        val list = controllers(context) ?: return null
+        return if (pkg != null) {
+            list.firstOrNull { it.packageName == pkg }?.let { it to null }
+                ?: (null to TvControl.Result(false, 404, "$pkg has no media session"))
+        } else {
+            pick(list)?.let { it to null } ?: (null to TvControl.Result(false, 404, "nothing is playing"))
+        }
+    }
+
+    /// POST /key for a media key (0.32.0-beta.4, #83): straight into the app's own media
+    /// session, through its transport controls. The media-key route (dispatchMediaKeyEvent)
+    /// reaches the app only through MediaSession.Callback.onMediaButtonEvent, which acts on a
+    /// key only when the app lists that action in its PlaybackState - and Plex on a TCL did
+    /// nothing with play or pause that way. A transport control calls onPlay/onPause directly,
+    /// as a phone's media notification does.
+    ///
+    /// Null when no session takes it (no access, or nothing active): the caller then sends
+    /// the media key as before. A 404 when [pkg] was asked for and has no session.
+    fun transport(context: Context, key: String, pkg: String?): TvControl.Result? {
+        val (controller, missing) = sessionFor(context, pkg) ?: return null
+        if (controller == null) return if (pkg != null) missing else null
+        return try {
+            val playing = isPlaying(controller.playbackState?.state)
+            val action = transportAction(key, playing) ?: return null
+            val controls = controller.transportControls
+            when (action) {
+                "play" -> controls.play()
+                "pause" -> controls.pause()
+                "stop" -> controls.stop()
+                "skipToNext" -> controls.skipToNext()
+                "skipToPrevious" -> controls.skipToPrevious()
+                "rewind" -> controls.rewind()
+                "fastForward" -> controls.fastForward()
+            }
+            Log.i(LOG_TAG, "$key -> ${controller.packageName}.$action")
+            TvControl.Result(true, 200, "sent $key", mapOf("via" to "session",
+                "package" to controller.packageName, "action" to action))
+        } catch (ex: Throwable) {
+            // the session went away between finding and using it: the media key still may land
+            Log.w(LOG_TAG, "$key into the session failed: ${ex.message}")
+            null
+        }
+    }
+
+    class Art(val bytes: ByteArray, val mime: String, val key: String)
+
+    /// GET /media/art (0.32.0-beta.4, ha-pipup #61): the artwork of the session /media reports
+    /// (or of [pkg]), at most [ART_MAX_PX] on its longest side. Runs on the web-server thread.
+    fun art(context: Context, pkg: String?): Pair<Art?, TvControl.Result> {
+        val (controller, missing) = sessionFor(context, pkg)
+            ?: return null to TvControl.Result(false, 501, unavailableMessage(context))
+        if (controller == null) return null to missing!!
+        val noArt = TvControl.Result(false, 404, "${controller.packageName} shows no artwork")
+        val meta = try { controller.metadata } catch (ex: Throwable) {
+            return null to TvControl.Result(false, 404, "the media session ended: ${ex.message}")
+        } ?: return null to noArt
+        val key = artKey(controller.packageName, meta) ?: return null to noArt
+        return try {
+            val bitmap = ART_BITMAP_KEYS.firstNotNullOfOrNull { runCatching { meta.getBitmap(it) }.getOrNull() }
+                ?: ART_URI_KEYS.firstNotNullOfOrNull { meta.getString(it)?.takeIf { s -> s.isNotBlank() } }
+                    ?.let { decode(readUri(context, it)) }
+                ?: return null to TvControl.Result(false, 404, "the artwork of ${controller.packageName} could not be read")
+            val (bytes, mime) = encode(bitmap)
+            Art(bytes, mime, key) to TvControl.Result(true, 200, "ok")
+        } catch (ex: Throwable) {
+            Log.w(LOG_TAG, "artwork of ${controller.packageName}: ${ex.message}")
+            null to TvControl.Result(false, 404, "the artwork of ${controller.packageName} could not be read: ${ex.message}")
+        }
+    }
+
+    /// The bytes behind an artwork URI: content:, android.resource: and file: through the
+    /// content resolver (the app may refuse: then there is no artwork), http(s) fetched here.
+    private fun readUri(context: Context, value: String): ByteArray {
+        val uri = Uri.parse(value)
+        return when (uri.scheme?.lowercase()) {
+            "http", "https" -> {
+                val conn = URL(value).openConnection() as HttpURLConnection
+                conn.connectTimeout = ART_TIMEOUT_MS
+                conn.readTimeout = ART_TIMEOUT_MS
+                try {
+                    if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
+                    conn.inputStream.use { readCapped(it) }
+                } finally {
+                    conn.disconnect()
+                }
+            }
+            "content", "android.resource", "file" ->
+                (context.contentResolver.openInputStream(uri) ?: throw IllegalStateException("no stream"))
+                    .use { readCapped(it) }
+            else -> throw IllegalArgumentException("unsupported artwork URI scheme ${uri.scheme}")
+        }
+    }
+
+    private fun readCapped(input: InputStream): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            out.write(buffer, 0, n)
+            if (out.size() > ART_MAX_BYTES) throw IllegalStateException("artwork larger than ${ART_MAX_BYTES / 1024 / 1024} MB")
+        }
+        return out.toByteArray()
+    }
+
+    /// Decode, sampled down on the way in so a poster of several thousand pixels does not
+    /// need its full size in memory.
+    private fun decode(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, ART_MAX_PX)
+        }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
+    /// JPEG, or PNG when the image has transparency (an app icon), scaled to [ART_MAX_PX].
+    private fun encode(source: Bitmap): Pair<ByteArray, String> {
+        val (w, h) = fitWithin(source.width, source.height, ART_MAX_PX)
+        val bitmap = if (w != source.width || h != source.height) Bitmap.createScaledBitmap(source, w, h, true) else source
+        val png = bitmap.hasAlpha()
+        val out = ByteArrayOutputStream()
+        bitmap.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 85, out)
+        return out.toByteArray() to (if (png) "image/png" else "image/jpeg")
     }
 
     /// POST /media/seek: exactly one of [ms] (absolute) or [by] (relative), optionally in
@@ -244,7 +413,9 @@ object MediaSessions {
         val title: String?,
         val artist: String?,
         val album: String?,
-        val canSeek: Boolean
+        val canSeek: Boolean,
+        val actions: List<String> = emptyList(),
+        val artKey: String? = null
     ) {
         fun toMap(): Map<String, Any?> = linkedMapOf(
             "package" to pkg,
@@ -256,7 +427,11 @@ object MediaSessions {
             "title" to title,
             "artist" to artist,
             "album" to album,
-            "canSeek" to canSeek
+            "canSeek" to canSeek,
+            // 0.32.0-beta.4: what the app says it accepts (diagnostics; /key uses the
+            // transport controls either way), and which artwork /media/art hands out
+            "actions" to actions,
+            "artKey" to artKey
         )
 
         companion object {
@@ -270,7 +445,8 @@ object MediaSessions {
         if (before == null) return true
         if (before.pkg != now.pkg || before.state != now.state || before.title != now.title ||
             before.artist != now.artist || before.album != now.album ||
-            before.durationMs != now.durationMs || before.canSeek != now.canSeek) return true
+            before.durationMs != now.durationMs || before.canSeek != now.canSeek ||
+            before.actions != now.actions || before.artKey != now.artKey) return true
         val was = before.positionMs ?: return now.positionMs != null
         val pos = now.positionMs ?: return true
         val expected = if (before.state == "playing")
@@ -300,6 +476,52 @@ internal fun extrapolate(positionMs: Long, updatedAtElapsed: Long, speed: Float,
     if (positionMs < 0) return null // PlaybackState.PLAYBACK_POSITION_UNKNOWN
     if (!playing || updatedAtElapsed <= 0 || nowElapsed <= updatedAtElapsed) return positionMs
     return positionMs + ((nowElapsed - updatedAtElapsed) * speed.toDouble()).toLong()
+}
+
+/// PlaybackState.actions -> the names /media lists (0.32.0-beta.4), in a fixed order.
+private val ACTION_NAMES = linkedMapOf(
+    PlaybackState.ACTION_PLAY to "play",
+    PlaybackState.ACTION_PAUSE to "pause",
+    PlaybackState.ACTION_PLAY_PAUSE to "play_pause",
+    PlaybackState.ACTION_STOP to "stop",
+    PlaybackState.ACTION_SKIP_TO_NEXT to "next",
+    PlaybackState.ACTION_SKIP_TO_PREVIOUS to "previous",
+    PlaybackState.ACTION_SEEK_TO to "seek",
+    PlaybackState.ACTION_REWIND to "rewind",
+    PlaybackState.ACTION_FAST_FORWARD to "fast_forward"
+)
+
+internal fun actionNames(actions: Long): List<String> =
+    ACTION_NAMES.filterKeys { (actions and it) != 0L }.values.toList()
+
+/// POST /key name -> the transport control to call; play_pause becomes pause while
+/// something plays and play otherwise. Null for a name that is not a media key.
+internal fun transportAction(key: String, playing: Boolean): String? = when (key) {
+    "play" -> "play"
+    "pause" -> "pause"
+    "play_pause" -> if (playing) "pause" else "play"
+    "stop" -> "stop"
+    "next" -> "skipToNext"
+    "previous" -> "skipToPrevious"
+    "rewind" -> "rewind"
+    "fast_forward" -> "fastForward"
+    else -> null
+}
+
+/// [width] x [height] scaled down (never up) so the longest side is at most [maxPx].
+internal fun fitWithin(width: Int, height: Int, maxPx: Int): Pair<Int, Int> {
+    val longest = max(width, height)
+    if (longest <= maxPx || longest <= 0) return width to height
+    val scale = maxPx.toDouble() / longest
+    return max(1, (width * scale).roundToInt()) to max(1, (height * scale).roundToInt())
+}
+
+/// The largest power-of-two sample size that keeps the longest side at or above [maxPx]
+/// (BitmapFactory then decodes a smaller copy; the exact size follows in fitWithin).
+internal fun sampleSize(width: Int, height: Int, maxPx: Int): Int {
+    var sample = 1
+    while (max(width, height) / (sample * 2) >= maxPx) sample *= 2
+    return sample
 }
 
 /// Where a seek lands: [absolute], or [current] + [relative]; never before 0 or past

@@ -23,7 +23,8 @@ import android.view.KeyEvent
 ///   anyway, so launch works wherever popups work.
 /// * **media keys** - `AudioManager.dispatchMediaKeyEvent` delivers to the active media
 ///   session (Netflix, YouTube, Spotify, Jellyfin, ...), the same path a Bluetooth remote's
-///   play button takes.
+///   play button takes. Since 0.32.0-beta.4 they go into the session's transport controls
+///   instead when media session access is granted (see MediaSessions.transport).
 /// * **volume** - `AudioManager` on STREAM_MUSIC. On a TV that passes volume through to
 ///   the set or an amplifier over HDMI-CEC (`isVolumeFixed`), an absolute level cannot be
 ///   set; steps and mute are still sent and the platform forwards them where it can.
@@ -139,15 +140,19 @@ object TvControl {
     fun availableKeys(): List<String> =
         MEDIA_KEYS.keys.toList() + if (globalKeysAvailable()) GLOBAL_KEYS.keys.toList() else emptyList()
 
-    fun key(context: Context, name: String?): Result {
+    /// POST /key. A media key goes into the app's media session when PiPup may see the
+    /// sessions (0.32.0-beta.4, #83; [pkg] picks the app, else the one /media reports), and
+    /// as a media key event otherwise. The answer's `via` says which: `session` or `media_key`.
+    fun key(context: Context, name: String?, pkg: String? = null): Result {
         val key = name?.lowercase()?.trim()
         MEDIA_KEYS[key]?.let { code ->
+            MediaSessions.transport(context, key!!, pkg?.takeIf { it.isNotBlank() })?.let { return it }
             val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             return try {
                 val now = SystemClock.uptimeMillis()
                 am.dispatchMediaKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
                 am.dispatchMediaKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-                Result(true, 200, "sent $key")
+                Result(true, 200, "sent $key", mapOf("via" to "media_key"))
             } catch (ex: Throwable) {
                 Log.e(LOG_TAG, "media key $key failed: ${ex.message}")
                 Result(false, 500, "media key failed: ${ex.message}")

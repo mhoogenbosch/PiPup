@@ -522,7 +522,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             // 6.0.1, OMX.amlogic.avc.decoder.awesome; the TCL on Android 8 was fine). There
             // we prefer the software decoders (OMX.google.* / c2.android.*), which never
             // touch that layer. `softwareDecoder` in the payload overrides the automatic rule.
-            val software = media.softwareDecoder ?: autoSoftwareDecoder()
+            val software = media.softwareDecoder ?: DecoderChoice.autoSoftware()
             Log.i(LOG_TAG, "video decoder: ${if (software) "software (preferred)" else "hardware (default)"}" +
                 " [auto=${media.softwareDecoder == null}, sdk=${Build.VERSION.SDK_INT}]")
             val renderers = DefaultRenderersFactory(context)
@@ -595,19 +595,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
                 if (MimeTypes.isVideo(mimeType)) infos.sortedBy { if (it.softwareOnly) 0 else 1 } else infos
             }
-
-            /// Automatic rule: software on Android < 8 (old vendor decoders, the projector
-            /// class of devices) and wherever an Amlogic decoder is present, hardware elsewhere.
-            @UnstableApi
-            fun autoSoftwareDecoder(): Boolean {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
-                return try {
-                    MediaCodecUtil.getDecoderInfos(MimeTypes.VIDEO_H264, false, false)
-                        .any { it.name.contains("amlogic", ignoreCase = true) }
-                } catch (e: Throwable) {
-                    false
-                }
-            }
+            // The automatic rule (software on Android < 8 and with an Amlogic decoder) lives in
+            // DecoderChoice since 0.32.0-beta.4: decided once, off the main thread.
         }
     }
 

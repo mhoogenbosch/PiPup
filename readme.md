@@ -216,6 +216,18 @@ records from is always running, so its answer comes in ~0.3 s. A separate "no au
 needed: with `muted` (the default) the app asks for video only. Check with go2rtc's `/api/streams`: a
 stream with consumers is warm.
 
+**On a LAN-only setup, consider leaving out go2rtc's STUN servers.** go2rtc answers a WHEP request only
+after it has gathered all its ICE candidates, including the ones it asks a STUN server for (by default
+`stun.l.google.com`). When that server is slow or blocked, the answer waits for it. @ckegel72 measured
+the first frame going from about 5.8 s to 1.7 s (#86) with:
+
+```yaml
+webrtc:
+  ice_servers: []
+```
+
+Only do this when the TV and go2rtc are on the same network: a viewer outside it needs those candidates.
+
 ### Keep the camera's keyframes under the TV's UDP buffer
 
 WebRTC sends each keyframe as one burst of UDP packets, and the TV's kernel has to hold that whole
@@ -965,11 +977,12 @@ this device cannot do it, 400 for a malformed request.
 |---|---|---|
 | `/apps` | GET | — answers `{"apps": [{"package", "label", "tv"}]}`, sorted by label (`tv` = has a TV launcher entry) |
 | `/launch` | POST | `package=<name>` and/or `uri=<deep link>`; `wake=false` to leave a sleeping screen off |
-| `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back` |
+| `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back`; optionally `package=` for a media key (0.32.0) |
 | `/volume` | GET / POST | one of `level=0-100`, `step=up\|down`, `mute=on\|off\|toggle`; `ui=false` hides the volume bar |
 | `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-30 s>`, `method=click\|tap\|ok` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (0.32.0) |
 | `/media` | GET | what is playing, in any app — see [Media sessions](#media-sessions) (0.32.0) |
 | `/media/seek` | POST | `ms=<position>` or `by=<+/- ms>`, optionally `package=` (0.32.0) |
+| `/media/art` | GET | the artwork of what is playing, as an image; optionally `package=` (0.32.0) |
 
 ```
 curl -X POST "http://tv:7979/launch?package=com.netflix.ninja"
@@ -982,8 +995,12 @@ curl -X POST "http://tv:7979/volume?level=30"
   Android's background-activity-start rules. A sleeping screen is woken first (unless `wake=false`).
   With only `uri`, Android picks the app that handles the link; add `package` to force one.
 - **Media keys** go to the app that currently holds the media session (Netflix, YouTube, Spotify,
-  Jellyfin, Kodi, …) — the same path as the play button on a Bluetooth remote. An app without a media
-  session ignores them.
+  Jellyfin, Kodi, …). With [media session access](#media-sessions) (since 0.32.0) they go straight into
+  that app's session as a transport control (play, pause, …), the way a phone's media notification
+  controls an app; `package=` picks the app. Without it they are sent as a media key event, the path of
+  the play button on a Bluetooth remote, which an app only acts on when it lists that action in its
+  playback state (Plex on a TCL did not). The answer's `via` says which: `session` or `media_key`. An
+  app without a media session ignores both.
 - **Home and back** need the accessibility service (`install.sh --accessibility`); without it they answer
   501 and are left out of `/state.control.keys`.
 - **Volume** is the media stream (`STREAM_MUSIC`). On a box whose volume belongs to the TV set or an
@@ -1091,7 +1108,9 @@ curl -X POST "http://tv:7979/media/seek?by=-10000"      # back 10 seconds
   "title": "Bill & Ted's Excellent Adventure",
   "artist": null,
   "album": null,
-  "canSeek": true
+  "canSeek": true,
+  "actions": ["play", "pause", "stop", "seek"],
+  "artKey": "5f2c81d0"
 }
 ```
 
@@ -1105,8 +1124,15 @@ curl -X POST "http://tv:7979/media/seek?by=-10000"      # back 10 seconds
 - `/media/seek` takes exactly one of `ms` or `by`, and `package=` to seek in that app's session instead of
   the reported one. It answers **409** when the app does not allow seeking (`canSeek: false`), **404**
   when nothing plays.
-- The same object is in `/state.media`, and a change of app, state or title, or a seek, is pushed at
-  once as event `media` (the position moving on is not: work it out from `positionUpdatedAt` and `speed`).
+- The same object is in `/state.media`, and a change of app, state, title or artwork, or a seek, is pushed
+  at once as event `media` (the position moving on is not: work it out from `positionUpdatedAt` and `speed`).
+- `actions` (0.32.0) lists what the app says it accepts: `play`, `pause`, `play_pause`, `stop`, `next`,
+  `previous`, `seek`, `rewind`, `fast_forward`. It is for diagnosing: `/key` sends play and pause into the
+  session either way, since some apps act on them without listing them.
+- `artKey` (0.32.0) changes when the artwork does, and is `null` when the app shows none. `GET /media/art`
+  returns that artwork as JPEG (PNG when it has transparency), at most 600 px on its longest side, with
+  the same key in the `X-PiPup-Art-Key` header; **404** without artwork. PiPup fetches artwork that the app
+  only gives as a link itself, and never hands out the link (a media server's link can carry its token).
 
 Android hands media sessions to an app with an enabled notification listener. PiPup's listener only
 exists for that grant and reads no notifications. Give it once over adb (`install.sh --media`):

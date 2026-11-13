@@ -79,8 +79,65 @@ class MediaClickTest {
         val map = MediaSessions.Snapshot("com.app", "paused", 1_000, 1_762_358_400_000, 0, 2_000, 0.0,
             "T", "A", "B", true).toMap()
         assertEquals(listOf("package", "state", "positionMs", "positionUpdatedAt", "durationMs", "speed",
-            "title", "artist", "album", "canSeek"), map.keys.toList())
+            "title", "artist", "album", "canSeek", "actions", "artKey"), map.keys.toList())
         assertEquals("2025-11-05T16:00:00Z", map["positionUpdatedAt"])
+    }
+
+    // ---------------------------------------------------------------- 0.32.0-beta.4: keys and artwork
+
+    @Test
+    fun actionNamesFollowThePlaybackStateBits() {
+        assertEquals(emptyList<String>(), actionNames(0L))
+        assertEquals(listOf("play", "pause", "seek"),
+            actionNames(PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY))
+        assertEquals(listOf("play_pause", "stop", "next", "previous", "rewind", "fast_forward"),
+            actionNames(PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP or
+                PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackState.ACTION_REWIND or PlaybackState.ACTION_FAST_FORWARD))
+    }
+
+    @Test
+    fun mediaKeysMapToTransportControls() {
+        assertEquals("play", transportAction("play", playing = true))
+        assertEquals("pause", transportAction("pause", playing = false))
+        assertEquals("pause", transportAction("play_pause", playing = true))
+        assertEquals("play", transportAction("play_pause", playing = false))
+        assertEquals("stop", transportAction("stop", playing = true))
+        assertEquals("skipToNext", transportAction("next", playing = true))
+        assertEquals("skipToPrevious", transportAction("previous", playing = true))
+        assertEquals("rewind", transportAction("rewind", playing = true))
+        assertEquals("fastForward", transportAction("fast_forward", playing = true))
+        assertNull(transportAction("home", playing = true))
+        // every media key /key accepts has a transport control
+        TvControl.MEDIA_KEYS.keys.forEach { assertTrue(it, transportAction(it, false) != null) }
+    }
+
+    @Test
+    fun artworkScalesDownNeverUp() {
+        assertEquals(300 to 200, fitWithin(300, 200, 600))
+        assertEquals(600 to 338, fitWithin(1920, 1080, 600))
+        assertEquals(400 to 600, fitWithin(1000, 1500, 600))
+        assertEquals(600 to 1, fitWithin(6000, 2, 600))
+        assertEquals(0 to 0, fitWithin(0, 0, 600))
+    }
+
+    @Test
+    fun sampleSizeKeepsAtLeastTheTargetSize() {
+        assertEquals(1, sampleSize(600, 400, 600))
+        assertEquals(1, sampleSize(1199, 600, 600))
+        assertEquals(2, sampleSize(1200, 600, 600))
+        assertEquals(4, sampleSize(3840, 2160, 600))   // 960 >= 600, 480 would be too small
+        assertEquals(1, sampleSize(100, 100, 600))
+    }
+
+    @Test
+    fun newArtworkOrActionsArePushed() {
+        val before = snap()
+        val withArt = before.copy(artKey = "0badf00d")
+        assertTrue(MediaSessions.worthPushing(before, withArt))
+        assertFalse(MediaSessions.worthPushing(withArt, withArt.copy(positionMs = 65_000, atElapsedMs = 15_000)))
+        assertTrue(MediaSessions.worthPushing(withArt, withArt.copy(artKey = "12345678")))
+        assertTrue(MediaSessions.worthPushing(before, before.copy(actions = listOf("pause"))))
     }
 
     // ---------------------------------------------------------------- click

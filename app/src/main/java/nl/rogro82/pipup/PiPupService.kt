@@ -145,6 +145,9 @@ class PiPupService : Service(), WebServer.Handler {
         }
 
         loadSettings()
+        // 0.32.0-beta.4 (ha-pipup #60): read the decoder list now, off the main thread, so
+        // no video popup has to wait for it there
+        DecoderChoice.prime()
         registerNsd()
         startWatchdog()
         startUpdateChecker()
@@ -1468,6 +1471,19 @@ class PiPupService : Service(), WebServer.Handler {
                    mapOf("ok" to false, "message" to MediaSessions.unavailableMessage(this)))
     }
 
+    /// GET /media/art (0.32.0-beta.4, ha-pipup #61): the artwork of what is playing, as JPEG
+    /// (PNG when it has transparency); `X-PiPup-Art-Key` matches `artKey` in /media.
+    /// 404 = no artwork, 501 = no media session access.
+    private fun artResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val (art, result) = MediaSessions.art(this, param(session, "package"))
+        if (art == null) return controlResponse(result)
+        return newFixedLengthResponse(NanoHTTPD.Response.Status.OK, art.mime,
+            java.io.ByteArrayInputStream(art.bytes), art.bytes.size.toLong()).apply {
+            addHeader("X-PiPup-Art-Key", art.key)
+            addHeader("Cache-Control", "no-store")
+        }
+    }
+
     /// `wait=` in seconds for /click and /launch: 0-30, [default] when absent, null when invalid.
     private fun waitSeconds(session: NanoHTTPD.IHTTPSession, default: Int): Int? {
         val raw = param(session, "wait") ?: return default
@@ -1648,6 +1664,7 @@ class PiPupService : Service(), WebServer.Handler {
                         "/apps" -> appsResponse()
                         "/volume" -> jsonResponse(NanoHTTPD.Response.Status.OK, TvControl.volumeState(this))
                         "/media" -> mediaResponse()
+                        "/media/art" -> artResponse(session)
                         else -> InvalidRequest("unknown uri: ${session.uri}")
                     }
                 }
@@ -1700,7 +1717,7 @@ class PiPupService : Service(), WebServer.Handler {
                         "/power" -> powerResponse(session)
                         "/apps" -> appsResponse()
                         "/launch" -> launchResponse(session)
-                        "/key" -> controlResponse(TvControl.key(this, param(session, "key")))
+                        "/key" -> controlResponse(TvControl.key(this, param(session, "key"), param(session, "package")))
                         "/click" -> clickResponse(session)
                         "/media" -> mediaResponse()
                         "/media/seek" -> controlResponse(MediaSessions.seek(this,
