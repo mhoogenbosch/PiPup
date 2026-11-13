@@ -131,6 +131,31 @@ class MediaClickTest {
     }
 
     @Test
+    fun samplePointsStayInsideTheImage() {
+        val points = samplePoints(600, 338, 4)
+        assertEquals(16, points.size)
+        assertEquals(75 to 42, points.first())
+        assertEquals(525 to 295, points.last())
+        points.forEach { (x, y) -> assertTrue(x in 0 until 600 && y in 0 until 338) }
+        assertEquals(List(16) { 0 to 0 }, samplePoints(1, 1, 4))
+        assertEquals(emptyList<Pair<Int, Int>>(), samplePoints(0, 100, 4))
+    }
+
+    @Test
+    fun artKeyFollowsPixelsAndDuration() {
+        // YouTube's TV client: empty title, the same bitmap object, the same size from video to video
+        val fields = listOf("com.amazon.firetv.youtube", null, null, "Channel", null, null, "212000")
+        val source = "android.media.metadata.ART:1280x720"
+        val key = artKeyOf(fields, source, listOf(1, 2, 3))
+        assertEquals(8, key.length)
+        assertEquals(key, artKeyOf(fields, source, listOf(1, 2, 3)))
+        assertTrue(key != artKeyOf(fields, source, listOf(1, 2, 4)))
+        assertTrue(key != artKeyOf(fields.dropLast(1) + "634000", source, listOf(1, 2, 3)))
+        // a link: no samples, the link itself tells pictures apart
+        assertTrue(artKeyOf(fields, "http://plex/a.jpg", emptyList()) != artKeyOf(fields, "http://plex/b.jpg", emptyList()))
+    }
+
+    @Test
     fun newArtworkOrActionsArePushed() {
         val before = snap()
         val withArt = before.copy(artKey = "0badf00d")

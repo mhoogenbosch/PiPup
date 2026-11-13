@@ -9,6 +9,14 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.32.0-beta.5] — 2026-11-13 (fifth test release for #83: artwork that follows YouTube)
+A **prerelease**, like the betas before. Only the artwork key changes; everything else is beta.4.
+### Fixed
+- **`artKey` now changes when YouTube's picture does.** YouTube's TV client leaves the title empty,
+  gives no artwork link and reuses the same metadata and bitmap from video to video. The key was made
+  of the title, artist, album, media ID and the picture's size, so it stayed the same and Home Assistant
+  kept showing the first picture. It now also takes the duration and 16 pixels spread over the bitmap.
+
 ## [v0.32.0-beta.4] — 2026-11-13 (fourth test release for #83: play and pause into the session, artwork)
 A **prerelease**, like the betas before. After @Ltek's test of beta.3 on a TCL (Android 11): waking,
 launching and navigating worked, but play and pause did nothing in Plex.
@@ -893,6 +901,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v0.32.0-beta.5]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.5
 [v0.32.0-beta.4]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.4
 [v0.32.0-beta.3]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.3
 [v0.32.0-beta.2]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.2

@@ -42,6 +42,8 @@ object MediaSessions {
     private const val ART_MAX_PX = 600
     private const val ART_MAX_BYTES = 8 * 1024 * 1024
     private const val ART_TIMEOUT_MS = 5000
+    /// artKey reads ART_SAMPLE_GRID x ART_SAMPLE_GRID pixels of a bitmap (0.32.0-beta.5).
+    private const val ART_SAMPLE_GRID = 4
 
     /// Where a session keeps its artwork: as a bitmap, or as a URI (in this order).
     private val ART_BITMAP_KEYS = listOf(MediaMetadata.METADATA_KEY_ART,
@@ -132,21 +134,42 @@ object MediaSessions {
         )
     }
 
-    /// Identifies the session's artwork without reading it: the item plus where its image
-    /// lives. Changes when the picture does, so a controller fetches /media/art only then.
-    /// Null when the session has no artwork. The URI itself is not handed out: a media
-    /// server's artwork URL can carry its access token.
+    /// Identifies the session's artwork without encoding it: the item, where its image lives,
+    /// and for a bitmap a few of its pixels. Changes when the picture does, so a controller
+    /// fetches /media/art only then. Null when the session has no artwork. The URI itself is
+    /// not handed out: a media server's artwork URL can carry its access token.
+    ///
+    /// 0.32.0-beta.5: the duration and the pixel samples were added. YouTube's TV client
+    /// leaves the title empty, gives no artwork URI and reuses the same metadata and bitmap
+    /// from video to video, so title, size and the bitmap's identity stay the same while the
+    /// picture changes (described in another bridge's ArtResolver; ideas only, no code).
     private fun artKey(pkg: String?, meta: MediaMetadata): String? {
-        val source = ART_BITMAP_KEYS.firstNotNullOfOrNull { key ->
-            runCatching { meta.getBitmap(key) }.getOrNull()?.let { "$key:${it.width}x${it.height}" }
-        } ?: ART_URI_KEYS.firstNotNullOfOrNull { key -> meta.getString(key)?.takeIf { it.isNotBlank() } }
-          ?: return null
-        val item = listOf(pkg, meta.getString(MediaMetadata.METADATA_KEY_TITLE),
+        var source: String? = null
+        var samples: List<Int> = emptyList()
+        for (key in ART_BITMAP_KEYS) {
+            val bitmap = runCatching { meta.getBitmap(key) }.getOrNull() ?: continue
+            source = "$key:${bitmap.width}x${bitmap.height}"
+            samples = samplePixels(bitmap)
+            break
+        }
+        source = source ?: ART_URI_KEYS.firstNotNullOfOrNull { key -> meta.getString(key)?.takeIf { it.isNotBlank() } }
+            ?: return null
+        return artKeyOf(listOf(pkg, meta.getString(MediaMetadata.METADATA_KEY_TITLE),
             meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE),
             meta.getString(MediaMetadata.METADATA_KEY_ARTIST),
             meta.getString(MediaMetadata.METADATA_KEY_ALBUM),
-            meta.getString(MediaMetadata.METADATA_KEY_MEDIA_ID), source).joinToString("|")
-        return "%08x".format(item.hashCode())
+            meta.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+            meta.getLong(MediaMetadata.METADATA_KEY_DURATION).toString()), source, samples)
+    }
+
+    /// [ART_SAMPLE_GRID]² pixels spread over the bitmap: cheap (no copy, no scaling) and enough
+    /// to tell one picture from the next. Empty when the bitmap cannot be read (recycled, or a
+    /// hardware bitmap): the other fields of the key decide then.
+    private fun samplePixels(bitmap: Bitmap): List<Int> = try {
+        if (bitmap.isRecycled) emptyList()
+        else samplePoints(bitmap.width, bitmap.height, ART_SAMPLE_GRID).map { (x, y) -> bitmap.getPixel(x, y) }
+    } catch (_: Throwable) {
+        emptyList()
     }
 
     /// The session a request is about: that of [pkg], else the one /media reports.
@@ -507,6 +530,22 @@ internal fun transportAction(key: String, playing: Boolean): String? = when (key
     "fast_forward" -> "fastForward"
     else -> null
 }
+
+/// The centres of a [grid] x [grid] raster over a [width] x [height] image (0.32.0-beta.5);
+/// empty for an image without pixels.
+internal fun samplePoints(width: Int, height: Int, grid: Int): List<Pair<Int, Int>> {
+    if (width <= 0 || height <= 0 || grid <= 0) return emptyList()
+    return (0 until grid).flatMap { row ->
+        (0 until grid).map { col ->
+            ((2 * col + 1) * width / (2 * grid)).coerceIn(0, width - 1) to
+                ((2 * row + 1) * height / (2 * grid)).coerceIn(0, height - 1)
+        }
+    }
+}
+
+/// artKey from the item's fields, the artwork's source and its pixel samples: 8 hex digits.
+internal fun artKeyOf(fields: List<String?>, source: String, samples: List<Int>): String =
+    "%08x".format((fields + source + samples.joinToString(",")).joinToString("|").hashCode())
 
 /// [width] x [height] scaled down (never up) so the longest side is at most [maxPx].
 internal fun fitWithin(width: Int, height: Int, maxPx: Int): Pair<Int, Int> {
