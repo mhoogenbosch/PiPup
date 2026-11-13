@@ -143,20 +143,20 @@ data class PopupProps(
         // null/absent = ExoPlayer defaults. Meant for RTSP; with HLS the playlist sets the delay.
         data class Video(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH, val muted: Boolean = false,
                          val poster: String? = null, val softwareDecoder: Boolean? = null,
-                         val height: Int? = null, val bufferMs: Int? = null): Media()
+                         val height: Int? = null, val bufferMs: Int? = null, val posterMode: String? = null): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         data class Image(val uri: String, val width: Int = DEFAULT_MEDIA_WIDTH): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         // transparent (0.24.0): the WebView paints no background of its own, so a page
         // whose html/body background is transparent shows the TV picture behind it.
         data class Web(val uri: String, val width: Int = 640, val height: Int = 480, val muted: Boolean = false,
-                       val poster: String? = null, val transparent: Boolean = false): Media()
+                       val poster: String? = null, val transparent: Boolean = false, val posterMode: String? = null): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         // whep (0.25.0): a WebRTC stream played straight from a WHEP endpoint (e.g. go2rtc's
         // http://host:1984/api/webrtc?src=<camera>), without loading the server's player page.
         // `poster` as for web; `transparent` lets letterbox bars show the TV behind.
         data class Whep(val uri: String, val width: Int = 640, val height: Int = 360, val muted: Boolean = true,
-                        val poster: String? = null, val transparent: Boolean = false): Media()
+                        val poster: String? = null, val transparent: Boolean = false, val posterMode: String? = null): Media()
         @JsonIgnoreProperties(ignoreUnknown = true)
         // grid (0.29.0): a camera wall - up to MAX_GRID_TILES WHEP streams in one popup, one
         // WebView with a peer connection per tile. `width`/`height` are the whole grid;
@@ -225,4 +225,14 @@ internal fun gridColumns(tiles: Int, requested: Int?): Int {
     if (tiles <= 1) return 1
     requested?.let { return it.coerceIn(1, tiles) }
     return if (tiles <= 4) 2 else 3
+}
+
+internal enum class PosterMode { Fit, Fill, Stretch, Center }
+
+internal fun parsePosterMode(value: String?): PosterMode? = when (value?.lowercase()) {
+    "fit" -> PosterMode.Fit
+    "fill" -> PosterMode.Fill
+    "stretch" -> PosterMode.Stretch
+    "center" -> PosterMode.Center
+    else -> null
 }
