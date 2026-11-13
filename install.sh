@@ -17,6 +17,8 @@ set -uo pipefail
 PACKAGE="nl.rogro82.pipup"
 ADMIN_COMPONENT="$PACKAGE/.AdminReceiver"
 ACCESSIBILITY_COMPONENT="$PACKAGE/$PACKAGE.PiPupAccessibilityService"
+CONTROL_COMPONENT="$PACKAGE/$PACKAGE.PiPupControlService"
+MEDIA_COMPONENT="$PACKAGE/$PACKAGE.MediaListenerService"
 REPO="mhoogenbosch/PiPup"
 PORT=7979
 
@@ -26,6 +28,10 @@ GRANT_ACCESSIBILITY=0
 NO_ACCESSIBILITY=0
 FORCE_UNINSTALL=0
 WAKE=0
+GRANT_MEDIA=0
+CLICK_PACKAGES=""
+CLICK_SET=0
+NO_CLICK=0
 DEVICES=()
 
 usage() {
@@ -41,6 +47,14 @@ Options:
                       accessibility service is what keeps the process alive there
                       (oom_score_adj 100, out of the vendor guard's reach)
   --no-accessibility  do not enable it, not even on TCL
+  --media             give access to the active media sessions (app >= 0.32.0):
+                      GET /media shows what plays in any app, POST /media/seek
+                      jumps to a time. Ignored by Android on low-RAM devices
+  --click <packages>  let PiPup press buttons in these apps (comma-separated, e.g.
+                      com.plexapp.android; app >= 0.32.0): enables the separate
+                      "PiPup control" accessibility service and sets the list.
+                      Other apps stay refused
+  --no-click          switch the control service off and clear that list
   --force-uninstall   uninstall first when the signature differs
                       (WARNING: wipes the app's stable device id, so Home Assistant
                       sees a new device)
@@ -67,6 +81,9 @@ while [ $# -gt 0 ]; do
         --no-accessibility) NO_ACCESSIBILITY=1; shift ;;
         --force-uninstall)  FORCE_UNINSTALL=1; shift ;;
         --wake)             WAKE=1; shift ;;
+        --media)            GRANT_MEDIA=1; shift ;;
+        --click)            CLICK_PACKAGES="${2?--click needs a package list}"; CLICK_SET=1; shift 2 ;;
+        --no-click)         NO_CLICK=1; shift ;;
         -h|--help)          usage; exit 0 ;;
         -*)                 err "unknown option: $1"; usage; exit 2 ;;
         *)                  DEVICES+=("$1"); shift ;;
@@ -77,6 +94,63 @@ if [ ${#DEVICES[@]} -eq 0 ]; then
     usage
     exit 2
 fi
+# the list goes into a remote shell command: package names only
+case "$CLICK_PACKAGES" in
+    *[!A-Za-z0-9._,]*) err "--click: only package names, separated by commas"; exit 2 ;;
+esac
+
+# Whether the ':'-separated list $1 holds component $2, in the full (pkg/pkg.Cls) or the
+# short (pkg/.Cls) form. Matches the whole component: since 0.32.0 PiPup has two
+# accessibility services, and one being on must not read as the other being on.
+has_component() {
+    local short="${2/\/$PACKAGE./\/.}"
+    case ":$1:" in
+        *":$2:"*|*":$short:"*) return 0 ;;
+    esac
+    return 1
+}
+
+# A component list without empty and "null" entries. `settings get` prints null when the
+# setting is unset, and a hand-written append (readme before 0.32.0) kept it: null:pkg/...
+clean_components() {
+    printf '%s' "$1" | tr ':' '\n' | grep -vx -e '' -e 'null' | paste -sd: -
+}
+
+# Add accessibility service $2 (label $3) to the enabled list on device $1.
+enable_accessibility() {
+    local current merged
+    current=$(adb -s "$1" shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r')
+    if has_component "$current" "$2"; then
+        ok "$3 already enabled"
+        return
+    fi
+    current=$(clean_components "$current")
+    case "$current" in
+        "") merged="$2" ;;
+        *)  merged="$current:$2" ;;
+    esac
+    adb -s "$1" shell "settings put secure enabled_accessibility_services $merged" >/dev/null 2>&1
+    adb -s "$1" shell "settings put secure accessibility_enabled 1" >/dev/null 2>&1
+    ok "$3 enabled"
+}
+
+# Remove accessibility service $2 (label $3) from the enabled list on device $1.
+disable_accessibility() {
+    local current short kept
+    current=$(adb -s "$1" shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r')
+    if ! has_component "$current" "$2"; then
+        ok "$3 already off"
+        return
+    fi
+    short="${2/\/$PACKAGE./\/.}"
+    kept=$(clean_components "$current" | tr ':' '\n' | grep -vxF -e "$2" -e "$short" | paste -sd: -)
+    if [ -z "$kept" ]; then
+        adb -s "$1" shell "settings delete secure enabled_accessibility_services" >/dev/null 2>&1
+    else
+        adb -s "$1" shell "settings put secure enabled_accessibility_services $kept" >/dev/null 2>&1
+    fi
+    ok "$3 switched off"
+}
 
 command -v adb >/dev/null 2>&1 || { err "adb not found on PATH"; exit 1; }
 
@@ -181,17 +255,56 @@ for device in "${DEVICES[@]}"; do
     fi
 
     if [ "$GRANT_ACCESSIBILITY" -eq 1 ]; then
+        enable_accessibility "$target" "$ACCESSIBILITY_COMPONENT" "accessibility fallback"
+    fi
+
+    # 0.32.0 (#83): media sessions. Android lists them for an app whose notification
+    # listener is enabled; PiPup's listener reads no notifications.
+    if [ "$GRANT_MEDIA" -eq 1 ]; then
+        sdk=$(adb -s "$target" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')
+        if [ "${sdk:-0}" -ge 26 ]; then
+            adb -s "$target" shell "cmd notification allow_listener $MEDIA_COMPONENT" >/dev/null 2>&1
+        else
+            # Android < 8 has no `cmd notification allow_listener`; there the setting itself
+            # is the list (from 8 on it is only a mirror, so it is not written there)
+            listeners=$(adb -s "$target" shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r')
+            if ! has_component "$listeners" "$MEDIA_COMPONENT"; then
+                case "$listeners" in
+                    null|"") merged="$MEDIA_COMPONENT" ;;
+                    *)       merged="$listeners:$MEDIA_COMPONENT" ;;
+                esac
+                adb -s "$target" shell "settings put secure enabled_notification_listeners $merged" >/dev/null 2>&1
+            fi
+        fi
+        if [ "$(adb -s "$target" shell getprop ro.config.low_ram 2>/dev/null | tr -d '\r')" = "true" ]; then
+            warn "low-RAM device: Android gives no app access to media sessions here"
+        else
+            log "  · media session access requested (verifying below)"
+        fi
+    fi
+
+    # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
+    # The list can only be set like this (adb), never over the LAN.
+    if [ "$CLICK_SET" -eq 1 ]; then
         current=$(adb -s "$target" shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r')
-        merged=""
-        case "$current" in
-            *"$PACKAGE"*) ok "accessibility service already enabled" ;;
-            null|"")      merged="$ACCESSIBILITY_COMPONENT" ;;
-            *)            merged="$current:$ACCESSIBILITY_COMPONENT" ;;
-        esac
-        if [ -n "$merged" ]; then
-            adb -s "$target" shell "settings put secure enabled_accessibility_services $merged" >/dev/null 2>&1
-            adb -s "$target" shell "settings put secure accessibility_enabled 1" >/dev/null 2>&1
-            ok "accessibility fallback enabled"
+        if has_component "$current" "$CONTROL_COMPONENT"; then
+            # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
+            # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
+            disable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click), restarting:"
+            sleep 2
+        fi
+        enable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click)"
+    elif [ "$NO_CLICK" -eq 1 ]; then
+        disable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click)"
+        CLICK_PACKAGES=""
+    fi
+    if [ "$CLICK_SET" -eq 1 ] || [ "$NO_CLICK" -eq 1 ]; then
+        result=$(adb -s "$target" shell "am broadcast -f 0x20 -n $PACKAGE/.ControlConfigReceiver -a $PACKAGE.SET_CLICK_PACKAGES --es packages '$CLICK_PACKAGES'" 2>&1 | tr -d '\r')
+        if printf '%s' "$result" | grep -q 'result=1'; then
+            allowed=$(printf '%s' "$result" | grep -o 'data="[^"]*"' | cut -d'"' -f2)
+            ok "click allowed in: ${allowed:-no app}"
+        else
+            err "could not set the click list (app older than 0.32.0?): $(printf '%s' "$result" | tr '\n' ' ')"
         fi
     fi
 
@@ -225,6 +338,14 @@ for device in "${DEVICES[@]}"; do
             | grep -o '"permissions":{"overlay":[a-z]*' | cut -d: -f3)
         ok "running: v${version:-?} on http://$host:$PORT (overlay=${overlay:-?})"
         [ "${overlay:-}" = "true" ] || err "overlay permission still missing - popups will stay invisible"
+
+        if [ "$GRANT_MEDIA" -eq 1 ]; then
+            if printf '%s' "$state" | grep -q '"media":{"access":true'; then
+                ok "media sessions readable (GET /media)"
+            else
+                warn "media sessions NOT readable yet: $(printf '%s' "$state" | grep -o '"media":{"access":false,"reason":"[^"]*"' | cut -d'"' -f8)"
+            fi
+        fi
 
         if [ "$GRANT_POWER" -eq 1 ] || [ "$GRANT_ACCESSIBILITY" -eq 1 ]; then
             can_sleep=$(printf '%s' "$state" | grep -o '"canSleep":[a-z]*' | cut -d: -f2)

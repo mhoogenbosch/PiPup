@@ -9,6 +9,9 @@
     <string name="update_available_message">Druk op OK om de update nu te installeren.</string>
     <string name="update_install">Installeren</string>
     <string name="accessibility_service_description">Hiermee kan PiPup het scherm op verzoek uitzetten. Alleen nodig op toestellen waar de apparaatbeheerder dat niet kan; PiPup leest niets van het scherm.</string>
+    <string name="control_service_label">PiPup-bediening</string>
+    <string name="control_service_description">Laat Home Assistant een knop indrukken in een app die je hebt toegestaan, zoals Afspelen in Plex. Leest een venster alleen tijdens zo\'n verzoek, alleen van een toegestane app, en meldt alleen of de klik gelukt is.</string>
+    <string name="media_listener_label">PiPup-mediasessies</string>
     <string name="permission_overlay">Overlay-permissie</string>
     <string name="permission_install">Zelf-updaten</string>
     <string name="permission_line_ok">%1$s: toegekend</string>

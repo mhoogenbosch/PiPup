@@ -9,6 +9,132 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.32.0-beta.5] — 2026-11-13 (fifth test release for #83: artwork that follows YouTube)
+A **prerelease**, like the betas before. Only the artwork key changes; everything else is beta.4.
+### Fixed
+- **`artKey` now changes when YouTube's picture does.** YouTube's TV client leaves the title empty,
+  gives no artwork link and reuses the same metadata and bitmap from video to video. The key was made
+  of the title, artist, album, media ID and the picture's size, so it stayed the same and Home Assistant
+  kept showing the first picture. It now also takes the duration and 16 pixels spread over the bitmap.
+
+## [v0.32.0-beta.4] — 2026-11-13 (fourth test release for #83: play and pause into the session, artwork)
+A **prerelease**, like the betas before. After @Ltek's test of beta.3 on a TCL (Android 11): waking,
+launching and navigating worked, but play and pause did nothing in Plex.
+### Changed
+- **Media keys go into the app's media session.** With media session access, `POST /key` with
+  `play`, `pause`, `play_pause`, `stop`, `next`, `previous`, `rewind` or `fast_forward` now calls the
+  session's transport controls (`MediaController.TransportControls`), the way a phone's media
+  notification controls an app. The media key event used until now reaches an app through
+  `MediaSession.Callback.onMediaButtonEvent`, which acts on a key only when the app lists that action in
+  its playback state. Without access it is still sent that way. `play_pause` becomes pause while
+  something plays and play otherwise. `package=` picks the app's session; the answer's `via` says
+  `session` or `media_key`.
+### Added
+- **`actions` in `/media`** (and `/state.media`): what the app says it accepts (`play`, `pause`,
+  `play_pause`, `stop`, `next`, `previous`, `seek`, `rewind`, `fast_forward`), for diagnosing.
+- **Artwork** (ha-pipup #61): `artKey` in `/media` changes with the picture (`null` = none), and
+  `GET /media/art` returns it as JPEG (PNG with transparency), at most 600 px, with header
+  `X-PiPup-Art-Key`. Bitmap or link from the session; a link is fetched by the app and never handed out.
+- **`posterMode`** on `video`, `web` and `whep` (#87, thanks @rshadow): `fit`, `fill`, `stretch` or
+  `center` scale the poster inside the requested area instead of letting it resize that area, so a
+  4:3 snapshot no longer turns a 16:9 viewport into 4:3. Without it nothing changes.
+### Fixed
+- **The automatic decoder choice no longer runs on the main thread** (ha-pipup #60). Every video popup
+  read the codec list there (`MediaCodecUtil`, a synchronized call); it is now read once, in the
+  background, when the service starts. On a MediaTek TCL (Android 8) with live TV running, stacked
+  video popups froze the app for good; whether this lock was the cause could not be checked here.
+  `softwareDecoder: true` stays the sure way out on such a TV.
+### Docs
+- WHEP: leaving out go2rtc's STUN servers on a LAN-only setup (`webrtc: ice_servers: []`) took the first
+  frame from about 5.8 s to 1.7 s for @ckegel72 (#86).
+
+## [v0.32.0-beta.3] — 2026-11-11 (third test release for #83: `method=ok`, honest tap, wake check)
+A **prerelease**, like beta.1 and beta.2. After @Ltek's test of beta.2 on a TCL (Android 11).
+### Added
+- **`method=ok` on `/click` and `/launch?click=`**: give the view the input focus, check that it has it,
+  then press OK, the way the remote does. Android 13+ presses OK itself (`GLOBAL_ACTION_DPAD_CENTER`);
+  below Android 13 an app cannot, so the answer says `"pressed": false, "key": "KEYCODE_DPAD_CENTER"` and
+  the caller presses it over adb (ha-pipup does). Nothing is pressed when the view does not take the focus.
+  `/state.control.okPressedBy` says `app` or `adb`.
+### Fixed
+- **`method=tap` is honest about where it cannot work.** Android drops a tap from an app on Android 11
+  without a touchscreen and on Android 12+ without `android.hardware.faketouch` (AOSP
+  `AccessibilityServiceConnection.dispatchGesture`): on the TCL every tap came back "cancelled". Most TVs
+  have neither; Android 7–10 (Fire OS 7) deliver taps. `/state.control.tap` is now `false` there,
+  `/state.control.tapUnavailable` says why, and `/click?method=tap` answers 501 with that reason
+  instead of 500 after trying.
+- **Waking is checked.** `/launch` answered `woke: true` as soon as the wake attempt was made, while the
+  TCL's screen stayed off. `/launch` and `/power?state=on|off` now wait up to 3 s for the screen and
+  answer what happened: `/launch` `woke` (did it come on) and `screenOn`, `/power` `reached` and
+  `screenOn`. `ok` on `/power` stays "the attempt was made".
+- **`null:` in `enabled_accessibility_services`**: the readme's hand-written append kept the `null` that
+  `settings get` prints for an empty setting (`null:nl.rogro82.pipup/…`). Fixed in the readme;
+  `install.sh`/`install.ps1` drop such entries when they change the list. Harmless before: Android skips it.
+
+## [v0.32.0-beta.2] — 2026-11-09 (second test release for #83: tap, longer wait, `changed`)
+A **prerelease**, like beta.1: neither the app's own updater nor ha-pipup offers it. Install it with
+`install.sh` from the release. After @Ltek's test on a TCL (Android 11) with the new Plex app.
+### Added
+- **`method=tap` on `/click` and `/launch?click=`**: a short touch on the centre of the view that was
+  found (`dispatchGesture`, Android 7+), for apps whose buttons accept the accessibility click and then do
+  nothing. Plex (React Native) is one: `action-button-watch` was found and "clicked", but the film only
+  started with a real touch or the OK key. `method=click` (the accessibility click) stays the default. The
+  control service now declares `canPerformGestures`; it taps only the view it found, only while the
+  request runs, under the same list. `/state.control.tap` says whether it may.
+  **Coming from beta.1, run `install.sh --click <apps>` once more**: after an app update Android keeps
+  binding an already enabled service with the old version's capabilities (tested: `tap: false` after the
+  update, `true` after switching it off and on). `--click` now does that switch itself when the service
+  is already on; until then `/click?method=tap` answers 501 with that hint.
+- **`changed` in the answer**: after a press the app watches the pressed view for up to 1.5 s and says
+  whether it left the screen, moved, or its app left the front (`true`), or nothing happened to it
+  (`false`). A hint, not proof: a button that only changes its own label reads as `false`. The answer also
+  says which `method` was used.
+### Changed
+- **`wait` goes up to 30 s** (was 15) on `/click` and `/launch`: a cold start of Plex (logo, profile
+  screen) took longer than 10 s.
+- **The control service sees the same views as `uiautomator dump`**, where people look up the ids
+  (`flagIncludeNotImportantViews`, also set at runtime so an update needs no restart for it). Before, a
+  view Android marks "not important for accessibility" could not be found, such as SmartTube's
+  `main_image`, while the dump listed it.
+- Tested on the Fire TV Stick 4K Max (Fire OS 7, Android 9): `method=tap` on SmartTube's play button
+  started playback (a touch works there without a touchscreen), `changed` was `false` (the button stayed)
+  and `true` after opening a video; 400 for `method=press` and `wait=31`.
+
+## [v0.32.0-beta.1] — 2026-11-08 (test release for #83: what plays, seeking, pressing a button)
+A **prerelease**: neither the app's own updater nor ha-pipup offers it. Install it with `install.sh`
+from the release.
+### Added
+- **`GET /media`: what plays, in any app** (#83, asked by @Ltek). App, title, artist, album, state
+  (`playing`/`paused`/`buffering`/`stopped`), position and duration from the active media session, so
+  Netflix, YouTube, Plex, Spotify and Jellyfin all report the same way. Also in `/state.media`, and a
+  change of app, state or title, or a seek, is pushed at once as event `media`. Android hands media
+  sessions to an app with an enabled notification listener: `install.sh --media` grants it over adb;
+  PiPup's listener reads no notifications. Without it: 501, `/state.media.access: false`. On low-RAM
+  devices Android ignores the grant (`reason: low_ram`). Only sessions the app marks active are listed:
+  Spotify shows up while it plays, SmartTube (inactive session) does not.
+- **`POST /media/seek`**: `ms=` (absolute) or `by=` (± ms), clamped to the title; 409 when the app does
+  not allow seeking.
+- **`POST /click`: press a button in an app** (#83), e.g. Play on a Plex title page that a deep link
+  opened. By resource id, bare name or Jetpack Compose test tag; `wait=` up to 15 s for the view to
+  appear; a view that takes no click is pressed through its nearest parent that does. **`/launch`** takes
+  `click=` and `wait=` to open a page and press its button in one call.
+  Runs in a **separate** accessibility service, "PiPup control", off by default; the screen-off service
+  keeps observing nothing. It works only in apps on a list that is set over adb only
+  (`install.sh --click <apps>`, a broadcast guarded by `WRITE_SECURE_SETTINGS`), so nothing on the LAN
+  can widen it. It reads a window only while a click request runs and never returns what is on screen.
+  `/state.control.click` and `clickPackages` show the state. Unlike the request, the list cannot be set
+  through `/settings`: that port has no login. One click at a time (a second one answers 409); only app
+  windows are read.
+- Tested on a Fire TV Stick 4K Max (Fire OS 7, Android 9): `install.sh --media --click`, `/media` and seeking
+  with Spotify, `/click` and `/launch?click=` in SmartTube (a label pressed through its card), 403/404/400.
+### Fixed
+- **A release is newer than its own pre-releases** in the updater: `0.32.0` > `0.32.0-beta.1`. Before,
+  the suffix counted as a fourth number, so a tester on a beta would never have been offered the final
+  release.
+- **`/state.permissions.accessibility` matches the whole component.** It looked at the package name
+  only, so with only the new control service on, the screen-off service would have read as enabled.
+  `install.sh`/`install.ps1` had the same check and now match the whole component as well.
+
 ## [v0.31.0] — 2026-11-08 (low-latency video; the app screen upright on phones)
 ### Added
 - **`bufferMs` on video popups: an RTSP stream 1 s behind the camera instead of 3–4 s** (#79, idea, patch and
@@ -775,6 +901,11 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v0.32.0-beta.5]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.5
+[v0.32.0-beta.4]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.4
+[v0.32.0-beta.3]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.3
+[v0.32.0-beta.2]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.2
+[v0.32.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.1
 [v0.31.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.31.0
 [v0.30.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.30.1
 [v0.30.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.30.0

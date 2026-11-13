@@ -140,6 +140,47 @@
                     android:resource="@xml/accessibility_service"/>
         </service>
 
+        <!-- "PiPup control" (0.32.0, #83): presses a button in an app on POST /click. Separate
+             from the service above, which keeps observing nothing; off until enabled over adb,
+             and only acts for apps on the adb-set list (ControlConfigReceiver). -->
+        <service
+                android:name=".PiPupControlService"
+                android:label="@string/control_service_label"
+                android:exported="true"
+                android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                    android:name="android.accessibilityservice"
+                    android:resource="@xml/control_service"/>
+        </service>
+
+        <!-- Sets the apps the control service may press buttons in. Guarded by
+             WRITE_SECURE_SETTINGS: the adb shell holds it, ordinary apps do not, so the list
+             cannot be changed from the LAN or by another app. -->
+        <receiver
+                android:name=".ControlConfigReceiver"
+                android:exported="true"
+                android:permission="android.permission.WRITE_SECURE_SETTINGS">
+            <intent-filter>
+                <action android:name="nl.rogro82.pipup.SET_CLICK_PACKAGES"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- Media sessions (0.32.0, #83): an enabled notification listener is what Android
+             asks before it lists the active media sessions. Reads no notifications.
+             `adb shell cmd notification allow_listener nl.rogro82.pipup/nl.rogro82.pipup.MediaListenerService` -->
+        <service
+                android:name=".MediaListenerService"
+                android:label="@string/media_listener_label"
+                android:exported="true"
+                android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService"/>
+            </intent-filter>
+        </service>
+
         <!-- Invisible, finishes itself; only exists to turn the screen on. -->
         <activity
                 android:name=".WakeActivity"

@@ -73,6 +73,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # a tag with a suffix (v0.32.0-beta.1) is a test release: marked prerelease, so the
+          # app's updater and ha-pipup (both skip prereleases) never offer it to anyone
+          prerelease: ${{ contains(github.ref_name, '-') }}
           # the installers ship with the APK: they grant the app-ops the app cannot
           # grant itself, so a release is usable without cloning the repo
           files: |

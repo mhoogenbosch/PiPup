@@ -145,6 +145,9 @@ class PiPupService : Service(), WebServer.Handler {
         }
 
         loadSettings()
+        // 0.32.0-beta.4 (ha-pipup #60): read the decoder list now, off the main thread, so
+        // no video popup has to wait for it there
+        DecoderChoice.prime()
         registerNsd()
         startWatchdog()
         startUpdateChecker()
@@ -160,6 +163,10 @@ class PiPupService : Service(), WebServer.Handler {
             addAction("android.media.VOLUME_CHANGED_ACTION")
             addAction("android.media.STREAM_MUTE_CHANGED_ACTION")
         })
+        // 0.32.0 (#83): push what is playing as soon as it changes. Does nothing until
+        // media session access is granted; the watchdog and the listener retry.
+        MediaSessions.onChange = { emit("media") }
+        MediaSessions.start(this)
 
         // Android < 12: the installer wants an on-screen confirmation. See
         // launchInstallConfirmation() for why it is launched the way it is (0.26.1, #41).
@@ -264,6 +271,7 @@ class PiPupService : Service(), WebServer.Handler {
         runCatching { mRequestHandler.removeCallbacksAndMessages(null) }
         runCatching { UpdateManager.onPendingUserAction = null }
         runCatching { UpdateManager.onInstallFailed = null }
+        runCatching { MediaSessions.onChange = null }
         runCatching { SoundPlayer.stop(this) }
         super.onDestroy()
 
@@ -569,6 +577,8 @@ class PiPupService : Service(), WebServer.Handler {
                 // local check only (no network): a permission lost by a reinstall or
                 // revoked by the system is pushed as soon as it is seen
                 runCatching { checkPermissionsChanged() }
+                // 0.32.0: picks up a media session grant given after the start
+                runCatching { MediaSessions.start(this@PiPupService) }
                 mWatchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
             }
         }, WATCHDOG_INTERVAL_MS)
@@ -1298,8 +1308,19 @@ class PiPupService : Service(), WebServer.Handler {
             "launch" to true,
             "keys" to TvControl.availableKeys(),
             "lastLaunched" to TvControl.lastLaunched,
-            "lastLaunchedSecondsAgo" to TvControl.lastLaunchedSecondsAgo()
+            "lastLaunchedSecondsAgo" to TvControl.lastLaunchedSecondsAgo(),
+            // 0.32.0 (#83): POST /click works (control service on) and in which apps
+            "click" to PiPupControlService.connected(),
+            // 0.32.0-beta.2: method=tap can be used (Android 7+, gesture capability granted);
+            // 0.32.0-beta.3: and Android delivers taps here at all (touch input), else why not
+            "tap" to PiPupControlService.canTap(),
+            "tapUnavailable" to (if (PiPupControlService.connected()) PiPupControlService.tapUnavailableReason() else null),
+            // 0.32.0-beta.3: method=ok; who presses OK after the focus: "app" (Android 13+) or "adb"
+            "okPressedBy" to PiPupControlService.okPressedBy(),
+            "clickPackages" to ClickPolicy.packages(this)
         )
+        // 0.32.0 (#83): what is playing, in any app; {"access": false, "reason"} without the grant
+        state["media"] = MediaSessions.snapshot(this)
         state["volume"] = TvControl.volumeState(this)
         state["permissions"] = Permissions.asMap(this)
         state["update"] = mapOf(
@@ -1392,14 +1413,18 @@ class PiPupService : Service(), WebServer.Handler {
 
         val method = if (target) "activity" else PowerController.sleepMethod(this)
         val ok = if (target) PowerController.wake(this) else PowerController.sleep(this)
+        // 0.32.0-beta.3 (#83): wait (up to 3 s) until the screen got there, so screenOn is the
+        // outcome rather than the state before it; `reached` says whether it did. ok stays
+        // "the attempt was made", as before.
+        val reached = ok && PowerController.waitForScreen(this, target)
 
-        Log.d(LOG_TAG, "Power ${if (target) "on" else "off"} via ${method ?: "-"}: ok=$ok")
+        Log.d(LOG_TAG, "Power ${if (target) "on" else "off"} via ${method ?: "-"}: ok=$ok reached=$reached")
 
         val body = Json.writeValueAsString(mapOf(
             "state" to if (target) "on" else "off",
             "ok" to ok,
             "method" to method,
-            // the wake activity is still starting up, so this can lag one poll behind
+            "reached" to reached,
             "screenOn" to PowerController.screenOn(this)
         ))
         return newFixedLengthResponse(
@@ -1430,11 +1455,78 @@ class PiPupService : Service(), WebServer.Handler {
             400 -> NanoHTTPD.Response.Status.BAD_REQUEST
             403 -> NanoHTTPD.Response.Status.FORBIDDEN
             404 -> NanoHTTPD.Response.Status.NOT_FOUND
+            409 -> NanoHTTPD.Response.Status.CONFLICT
             501 -> NanoHTTPD.Response.Status.NOT_IMPLEMENTED
             else -> NanoHTTPD.Response.Status.INTERNAL_ERROR
         }
         if (result.ok) emit("control")
         return jsonResponse(status, mapOf("ok" to result.ok, "message" to result.message) + result.extra)
+    }
+
+    /// GET /media (0.32.0, #83): what is playing; 501 without media session access.
+    private fun mediaResponse(): NanoHTTPD.Response {
+        val media = MediaSessions.snapshot(this)
+        return if (media["access"] == true) jsonResponse(NanoHTTPD.Response.Status.OK, media)
+               else jsonResponse(NanoHTTPD.Response.Status.NOT_IMPLEMENTED,
+                   mapOf("ok" to false, "message" to MediaSessions.unavailableMessage(this)))
+    }
+
+    /// GET /media/art (0.32.0-beta.4, ha-pipup #61): the artwork of what is playing, as JPEG
+    /// (PNG when it has transparency); `X-PiPup-Art-Key` matches `artKey` in /media.
+    /// 404 = no artwork, 501 = no media session access.
+    private fun artResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val (art, result) = MediaSessions.art(this, param(session, "package"))
+        if (art == null) return controlResponse(result)
+        return newFixedLengthResponse(NanoHTTPD.Response.Status.OK, art.mime,
+            java.io.ByteArrayInputStream(art.bytes), art.bytes.size.toLong()).apply {
+            addHeader("X-PiPup-Art-Key", art.key)
+            addHeader("Cache-Control", "no-store")
+        }
+    }
+
+    /// `wait=` in seconds for /click and /launch: 0-30, [default] when absent, null when invalid.
+    private fun waitSeconds(session: NanoHTTPD.IHTTPSession, default: Int): Int? {
+        val raw = param(session, "wait") ?: return default
+        return raw.toIntOrNull()?.takeIf { it in 0..PiPupControlService.MAX_WAIT_SECONDS }
+    }
+
+    /// POST /click (0.32.0, #83): press the view `id` of `package`; `method=tap` (0.32.0-beta.2)
+    /// touches its centre instead, for apps that ignore an accessibility click; `method=ok`
+    /// (0.32.0-beta.3) focuses it and presses OK (Android 13+; below, the caller presses OK).
+    private fun clickResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val wait = waitSeconds(session, default = 0) ?: return controlResponse(TvControl.Result(false, 400,
+            "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
+        val method = ClickMethod.parse(param(session, "method"))
+            ?: return controlResponse(TvControl.Result(false, 400, METHOD_HINT))
+        return controlResponse(
+            PiPupControlService.click(this, param(session, "package"), param(session, "id"), wait, method))
+    }
+
+    /// POST /launch, since 0.32.0 (#83) optionally followed by a click: open a title's page
+    /// with a deep link, wait for its Play button and press it, in one call.
+    private fun launchResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val pkg = param(session, "package")
+        val click = param(session, "click")
+        // validate before launching: a bad wait= must not leave an app opened half-way
+        val wait = if (click == null) 0 else waitSeconds(session, default = DEFAULT_LAUNCH_CLICK_WAIT)
+            ?: return controlResponse(TvControl.Result(false, 400,
+                "wait must be 0-${PiPupControlService.MAX_WAIT_SECONDS} seconds"))
+        val method = ClickMethod.parse(param(session, "method"))
+            ?: return controlResponse(TvControl.Result(false, 400, METHOD_HINT))
+        val launched = TvControl.launch(this, pkg, param(session, "uri"),
+            wake = param(session, "wake")?.lowercase() !in setOf("false", "0", "off"))
+        if (click == null || !launched.ok) return controlResponse(launched)
+        val target = launched.extra["package"] as? String ?: pkg
+            ?: return controlResponse(TvControl.Result(false, 400,
+                "launched, but click= needs package=<name> to know which app to press in",
+                launched.extra + mapOf("launched" to true, "clicked" to false)))
+        val clicked = PiPupControlService.click(this, target, click, wait, method)
+        return controlResponse(
+            if (clicked.ok) TvControl.Result(true, 200, "launched and ${clicked.message}",
+                launched.extra + clicked.extra + mapOf("launched" to true, "clicked" to true))
+            else TvControl.Result(false, clicked.status, "launched, but ${clicked.message}",
+                launched.extra + clicked.extra + mapOf("launched" to true, "clicked" to false))
+        )
     }
 
     /// GET /permissions/diagnose - why a fix button did or did not appear.
@@ -1571,6 +1663,8 @@ class PiPupService : Service(), WebServer.Handler {
                         "/settings" -> settingsResponse(session)
                         "/apps" -> appsResponse()
                         "/volume" -> jsonResponse(NanoHTTPD.Response.Status.OK, TvControl.volumeState(this))
+                        "/media" -> mediaResponse()
+                        "/media/art" -> artResponse(session)
                         else -> InvalidRequest("unknown uri: ${session.uri}")
                     }
                 }
@@ -1622,10 +1716,12 @@ class PiPupService : Service(), WebServer.Handler {
                         "/settings" -> settingsResponse(session)
                         "/power" -> powerResponse(session)
                         "/apps" -> appsResponse()
-                        "/launch" -> controlResponse(TvControl.launch(this,
-                            param(session, "package"), param(session, "uri"),
-                            wake = param(session, "wake")?.lowercase() !in setOf("false", "0", "off")))
-                        "/key" -> controlResponse(TvControl.key(this, param(session, "key")))
+                        "/launch" -> launchResponse(session)
+                        "/key" -> controlResponse(TvControl.key(this, param(session, "key"), param(session, "package")))
+                        "/click" -> clickResponse(session)
+                        "/media" -> mediaResponse()
+                        "/media/seek" -> controlResponse(MediaSessions.seek(this,
+                            param(session, "ms"), param(session, "by"), param(session, "package")))
                         "/volume" -> controlResponse(TvControl.volume(this,
                             param(session, "level"), param(session, "step"), param(session, "mute"),
                             showUi = param(session, "ui")?.lowercase() !in setOf("false", "0", "off")))
@@ -1848,6 +1944,11 @@ class PiPupService : Service(), WebServer.Handler {
         const val UPDATE_CHECK_FIRST_DELAY_MS = 120_000L
         const val UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
         const val WATCHDOG_INTERVAL_MS = 30_000L
+        /// /launch?click=: how long to wait for the button when no wait= is given (0.32.0)
+        const val DEFAULT_LAUNCH_CLICK_WAIT = 10
+        const val METHOD_HINT = "method must be click (an accessibility click, the default), tap " +
+            "(a touch on the centre of the view, on devices with touch input) or ok (focus the view " +
+            "and press OK, as the remote does)"
         /// 0.29.0: one volume_changed push per burst of volume steps
         const val VOLUME_PUSH_DEBOUNCE_MS = 400L
         const val ONGOING_NOTIFICATION_ID = 123
