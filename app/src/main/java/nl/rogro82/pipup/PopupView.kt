@@ -121,16 +121,20 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         frame.clipToOutline = clip > 0f
     }
 
-    /// `onSized` receives the poster's intrinsic width/height once decoded, so the caller can
-    /// give the stream area the poster's aspect ratio right away. A camera snapshot has the same
-    /// aspect as the camera's stream, so still and live then line up exactly and the hand-over
-    /// shows no size jump (a provisional 16:9 box letterboxed a 4:3 snapshot, then jumped).
+    /// An explicit poster mode scales only the image; otherwise the poster may size the stream area.
     protected fun attachPoster(frame: FrameLayout, url: String?, params: FrameLayout.LayoutParams,
+                               posterMode: String? = null,
                                onSized: ((Int, Int) -> Unit)? = null) {
         attachLiveBadge(frame)   // every live stream area gets its poster here, so its badge too
         if (url.isNullOrEmpty()) return
+        val mode = parsePosterMode(posterMode)
         val iv = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.FIT_XY   // box already has the image's aspect
+            scaleType = when (mode) {
+                PosterMode.Fit -> ImageView.ScaleType.FIT_CENTER
+                PosterMode.Fill -> ImageView.ScaleType.CENTER_CROP
+                PosterMode.Center -> ImageView.ScaleType.CENTER
+                PosterMode.Stretch, null -> ImageView.ScaleType.FIT_XY
+            }
             setBackgroundColor(Color.TRANSPARENT)
         }
         frame.addView(iv, params)   // added after the stream view => drawn on top
@@ -142,7 +146,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     override fun onResourceReady(resource: android.graphics.Bitmap, transition: Transition<in android.graphics.Bitmap>?) {
                         if (mPoster !== iv) return   // already handed over / destroyed
                         iv.setImageBitmap(resource)
-                        if (resource.width > 0 && resource.height > 0) onSized?.invoke(resource.width, resource.height)
+                        if (mode == null && resource.width > 0 && resource.height > 0) {
+                            onSized?.invoke(resource.width, resource.height)
+                        }
                     }
                     override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) { iv.setImageDrawable(null) }
                     override fun onLoadFailed(errorDrawable: android.graphics.drawable.Drawable?) {
@@ -495,7 +501,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             frame.addView(textureView)
             val provisionalHeight = provisionalVideoHeight(media.width, media.height)
             attachPoster(frame, media.poster,
-                FrameLayout.LayoutParams(media.width, provisionalHeight).apply { gravity = Gravity.CENTER }
+                FrameLayout.LayoutParams(media.width, provisionalHeight).apply { gravity = Gravity.CENTER },
+                posterMode = media.posterMode
             ) { pw, ph ->
                 posterVideoHeight(media.width, media.height, pw, ph)?.let { sizeTo(media.width, it) }
             }
@@ -744,7 +751,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
             frame.addView(webView, layoutParams)
             attachPoster(frame, media.poster,
-                FrameLayout.LayoutParams(media.width, media.height).apply { gravity = Gravity.CENTER }
+                FrameLayout.LayoutParams(media.width, media.height).apply { gravity = Gravity.CENTER },
+                posterMode = media.posterMode
             ) { pw, ph ->
                 // Give the web view the poster's aspect at the requested width, so still and
                 // live stream match (an MJPEG page scales the image to the view width anyway).
@@ -824,9 +832,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 gravity = Gravity.CENTER
             })
             attachPoster(frame, media.poster,
-                FrameLayout.LayoutParams(media.width, media.height).apply { gravity = Gravity.CENTER }
+                FrameLayout.LayoutParams(media.width, media.height).apply { gravity = Gravity.CENTER },
+                posterMode = media.posterMode
             ) { pw, ph ->
-                // the camera's aspect, from its snapshot: video and still line up exactly
                 val h = (media.width.toLong() * ph / pw).toInt()
                 webView.layoutParams = FrameLayout.LayoutParams(media.width, h).apply { gravity = Gravity.CENTER }
                 mPoster?.layoutParams = FrameLayout.LayoutParams(media.width, h).apply { gravity = Gravity.CENTER }
