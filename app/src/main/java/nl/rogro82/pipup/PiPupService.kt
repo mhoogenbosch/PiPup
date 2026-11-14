@@ -166,6 +166,9 @@ class PiPupService : Service(), WebServer.Handler {
         // 0.32.0 (#83): push what is playing as soon as it changes. Does nothing until
         // media session access is granted; the watchdog and the listener retry.
         MediaSessions.onChange = { emit("media") }
+        // 0.33.0 (#88): another app came to the front (only with usage access)
+        ForegroundApp.onChange = { emit("foreground") }
+        ForegroundApp.start(this)
         MediaSessions.start(this)
 
         // Android < 12: the installer wants an on-screen confirmation. See
@@ -272,6 +275,7 @@ class PiPupService : Service(), WebServer.Handler {
         runCatching { UpdateManager.onPendingUserAction = null }
         runCatching { UpdateManager.onInstallFailed = null }
         runCatching { MediaSessions.onChange = null }
+        runCatching { ForegroundApp.onChange = null; ForegroundApp.stop() }
         runCatching { SoundPlayer.stop(this) }
         super.onDestroy()
 
@@ -1317,8 +1321,13 @@ class PiPupService : Service(), WebServer.Handler {
             "tapUnavailable" to (if (PiPupControlService.connected()) PiPupControlService.tapUnavailableReason() else null),
             // 0.32.0-beta.3: method=ok; who presses OK after the focus: "app" (Android 13+) or "adb"
             "okPressedBy" to PiPupControlService.okPressedBy(),
-            "clickPackages" to ClickPolicy.packages(this)
+            "clickPackages" to ClickPolicy.packages(this),
+            // 0.33.0 (#89): GET /screen.jpg answers here (with the token), else why not
+            "screen" to (ScreenShots.unavailableReason(this) == null),
+            "screenUnavailable" to ScreenShots.unavailableReason(this)
         )
+        // 0.33.0 (#88): the app in front, also when nothing plays; null without usage access
+        state["foreground"] = ForegroundApp.asMap(this)
         // 0.32.0 (#83): what is playing, in any app; {"access": false, "reason"} without the grant
         state["media"] = MediaSessions.snapshot(this)
         state["volume"] = TvControl.volumeState(this)
@@ -1480,6 +1489,40 @@ class PiPupService : Service(), WebServer.Handler {
         return newFixedLengthResponse(NanoHTTPD.Response.Status.OK, art.mime,
             java.io.ByteArrayInputStream(art.bytes), art.bytes.size.toLong()).apply {
             addHeader("X-PiPup-Art-Key", art.key)
+            addHeader("Cache-Control", "no-store")
+        }
+    }
+
+    /// GET /screen.jpg (0.33.0, #89): a picture of the screen, `width=` wide (160-1920, 640
+    /// when absent). Off until a token is set over adb, and only for a request that carries it
+    /// in `X-PiPup-Token` or `Authorization: Bearer`; never in the URL, which ends up in logs.
+    private fun screenResponse(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        val width = ScreenShots.parseWidth(param(session, "width"))
+            ?: return screenError(TvControl.Result(false, 400,
+                "width must be ${ScreenShots.MIN_WIDTH}-${ScreenShots.MAX_WIDTH}"))
+        val given = session.headers["x-pipup-token"]
+            ?: session.headers["authorization"]?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }
+                ?.substring(7)?.trim()
+        val (bytes, result) = ScreenShots.capture(this, given, width)
+        if (bytes == null) return screenError(result)
+        return newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "image/jpeg",
+            java.io.ByteArrayInputStream(bytes), bytes.size.toLong()).apply {
+            addHeader("Cache-Control", "no-store")
+        }
+    }
+
+    /// Like [controlResponse], with the statuses only /screen.jpg has, and without a push.
+    private fun screenError(result: TvControl.Result): NanoHTTPD.Response {
+        Log.d(LOG_TAG, "screen: ${result.status} ${result.message}")
+        val status = when (result.status) {
+            400 -> NanoHTTPD.Response.Status.BAD_REQUEST
+            401 -> NanoHTTPD.Response.Status.UNAUTHORIZED
+            409 -> NanoHTTPD.Response.Status.CONFLICT
+            429 -> NanoHTTPD.Response.Status.TOO_MANY_REQUESTS
+            501 -> NanoHTTPD.Response.Status.NOT_IMPLEMENTED
+            else -> NanoHTTPD.Response.Status.INTERNAL_ERROR
+        }
+        return jsonResponse(status, mapOf("ok" to false, "message" to result.message)).apply {
             addHeader("Cache-Control", "no-store")
         }
     }
@@ -1665,6 +1708,7 @@ class PiPupService : Service(), WebServer.Handler {
                         "/volume" -> jsonResponse(NanoHTTPD.Response.Status.OK, TvControl.volumeState(this))
                         "/media" -> mediaResponse()
                         "/media/art" -> artResponse(session)
+                        "/screen.jpg" -> screenResponse(session)
                         else -> InvalidRequest("unknown uri: ${session.uri}")
                     }
                 }

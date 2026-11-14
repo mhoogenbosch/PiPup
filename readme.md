@@ -16,6 +16,10 @@ streams) on your TV from your home-automation system, for **as long as you want*
 
 ## What this fork adds (compared to [rogro82/PiPup](https://github.com/rogro82/PiPup))
 
+- **The app in front, and a picture of the screen** (since 0.33.0) — `/state.foreground` says which app
+  is on screen, also when nothing plays (the launcher, a menu), and `GET /screen.jpg` answers a picture
+  of the screen on Android 11+. Both are off until granted over adb, and the picture also takes a token.
+  See [The app in front](#the-app-in-front) and [A picture of the screen](#a-picture-of-the-screen).
 - **What plays, and a button press** (since 0.32.0) — `GET /media` reports the playing app, title,
   state and position in any app with a media session, `POST /media/seek` jumps to an exact time, and
   `POST /click` presses a button in an app you allowed (Play on a Plex title page that a deep link
@@ -317,6 +321,7 @@ Grab `install.sh` (Linux/macOS/WSL) or `install.ps1` (Windows) from the
 ./install.sh 192.168.1.10 192.168.1.11          # downloads the latest APK itself
 ./install.sh --power --apk PiPup.apk 192.168.1.10
 ./install.sh --media --click com.plexapp.android 192.168.1.10   # 0.32.0: /media and /click
+./install.sh --apps --screen 192.168.1.10                       # 0.33.0: app in front and /screen.jpg
 # TCL Google TV: the accessibility keep-alive is enabled by default (see the TCL section)
 ```
 
@@ -327,6 +332,9 @@ handles a differently-signed build that is already installed — note that unins
 app's stable device id, so Home Assistant sees a new device afterwards. Since 0.32.0, `--media` gives
 access to the [media sessions](#media-sessions) and `--click <apps>` enables
 [clicking](#pressing-a-button-in-an-app) in the apps you list (`--no-click` switches it off again).
+Since 0.33.0, `--apps` gives usage access for [the app in front](#the-app-in-front), and `--screen`
+switches [the picture of the screen](#a-picture-of-the-screen) on with a new token that it prints once
+(`--screen-token <token>` to give your own, `--no-screen` to switch it off).
 
 Sleeping TVs are **left asleep**: the service is started in the background, which does not touch
 what is on screen. On a TCL Google TV use `--wake`, because its vendor guard freezes a service
@@ -491,6 +499,13 @@ trust boundary the network itself.
   never reports what is on the screen. Within a listed app, though, anyone on the LAN can press **any**
   view by its id, so list only apps where that is harmless (a player, not a store with a Buy button).
   `/state.control.clickPackages` shows the list.
+- Since 0.33.0, with usage access granted, anyone on the LAN can read which app is in front (its
+  package name and since when). `/screen.jpg` shows **what is on the screen**, which is the most
+  sensitive thing on this port, so it is the one path with a login: it stays off until you set a token
+  over adb, and answers only a request that carries that token. Nothing on the LAN can switch it on or
+  read the token back. The token travels as plain HTTP like everything else here, so someone who can
+  listen in on the network segment can pick it up; the picture itself is not encrypted either. Leave it
+  off on a TV where that matters. Protected video (Netflix, Prime Video, …) comes out black.
 - Since 0.29.0 nothing of PiPup goes into an Android backup or a device-to-device transfer: settings
   include the push webhook URL (anyone holding it can post to it) and the stable device id, which would
   make a new TV show up as the old one. A new or restored TV starts clean and is discovered as a new
@@ -983,6 +998,7 @@ this device cannot do it, 400 for a malformed request.
 | `/media` | GET | what is playing, in any app — see [Media sessions](#media-sessions) (0.32.0) |
 | `/media/seek` | POST | `ms=<position>` or `by=<+/- ms>`, optionally `package=` (0.32.0) |
 | `/media/art` | GET | the artwork of what is playing, as an image; optionally `package=` (0.32.0) |
+| `/screen.jpg` | GET | a picture of the screen; `width=<160-1920>`, header `X-PiPup-Token` — see [A picture of the screen](#a-picture-of-the-screen) (0.33.0) |
 
 ```
 curl -X POST "http://tv:7979/launch?package=com.netflix.ninja"
@@ -1081,7 +1097,8 @@ adb shell am broadcast -f 0x20 -n nl.rogro82.pipup/.ControlConfigReceiver \
 The broadcast answers with the list as it now is (`data="com.plexapp.android"`); `--es packages ""` empties
 it, leaving the extra out only reads it. The service declares no events, so it receives nothing by itself: it
 reads a window only while a `/click` runs, only when the app in front is on the list, and it answers
-whether the click happened, never what is on the screen. A `tap` touches only the centre of the view it
+whether the click happened, never what is on the screen (the separately switched
+[picture of the screen](#a-picture-of-the-screen) of 0.33.0 aside). A `tap` touches only the centre of the view it
 found, during that same request. `/state.control.click` says whether the service is on,
 `/state.control.tap` whether it may tap, `/state.control.clickPackages` which apps are allowed.
 
@@ -1144,6 +1161,76 @@ adb shell cmd notification allow_listener nl.rogro82.pipup/nl.rogro82.pipup.Medi
 Without it, `/media` answers **501** and `/state.media` is `{"access": false, "reason": "not_granted"}`.
 On a device marked low-RAM (`getprop ro.config.low_ram`), Android ignores the grant: `reason` is then
 `low_ram`.
+
+#### The app in front
+
+Since 0.33.0 (#88). `/state` has a `foreground` object: the app on screen, also when nothing plays
+(the launcher, a menu, an app without a media session).
+
+```
+"foreground": { "package": "com.netflix.ninja", "label": "Netflix", "since": "2026-11-14T13:20:00Z" }
+```
+
+`label` is the app's name, or `null` when Android hides the app from PiPup (an app without a launcher
+entry). `since` is when it came to the front, in UTC. With a webhook set, a change is pushed as event
+`foreground` within about 5 seconds, while the screen is on.
+
+It takes usage access, which a TV has no settings screen for. Give it once over adb
+(`install.sh --apps`):
+
+```
+adb shell appops set nl.rogro82.pipup GET_USAGE_STATS allow
+```
+
+Without it `foreground` is `null` and `/state.permissions.usage` is `false`. PiPup reads only which
+app came to the front and when: package names, nothing of what is on the screen, and no accessibility
+service is involved.
+
+#### A picture of the screen
+
+Since 0.33.0 (#89), on **Android 11 and up**. `GET /screen.jpg` answers one JPEG of the screen: for a
+dashboard background when nothing with artwork plays, to see a stuck dialog, or to check that a popup
+appeared.
+
+```
+curl -H "X-PiPup-Token: <token>" -o screen.jpg "http://tv:7979/screen.jpg?width=640"
+```
+
+- `width=` is 160-1920 (640 when left out); the picture keeps its shape and is never enlarged.
+- The token goes in the header `X-PiPup-Token`, or as `Authorization: Bearer <token>`. Not in the URL,
+  which ends up in logs.
+- Asked again within a second, you get the picture just taken: Android allows about one per second.
+- Protected video (Netflix, Prime Video, …) comes out black, as with adb's `screencap`. PiPup's own
+  popups are in the picture.
+
+| Status | Meaning |
+|---|---|
+| 200 | the JPEG, with `Cache-Control: no-store` |
+| 400 | `width` is not 160-1920 |
+| 401 | no token, or a wrong one |
+| 409 | the screen is off |
+| 429 | asked too fast |
+| 501 | not switched on, Android older than 11, the control service is off, or it was switched on before 0.33.0 and not restarted since (run `install.sh --screen` again) |
+
+**Off by default.** It is switched on by setting a token, and that can only be done over adb, like the
+click list. `install.sh --screen` does it all: it enables the control service, makes a random token,
+sets it and prints it once. By hand:
+
+```
+# the control service (if it is not on yet), then the token: 16-128 of A-Z a-z 0-9 _ -
+adb shell settings put secure enabled_accessibility_services \
+    "<current value>:nl.rogro82.pipup/nl.rogro82.pipup.PiPupControlService"
+adb shell am broadcast -f 0x20 -n nl.rogro82.pipup/.ControlConfigReceiver \
+    -a nl.rogro82.pipup.SET_SCREEN_TOKEN --es token "<your token>"
+# off again
+adb shell am broadcast -f 0x20 -n nl.rogro82.pipup/.ControlConfigReceiver \
+    -a nl.rogro82.pipup.SET_SCREEN_TOKEN --es token ""
+```
+
+The picture is taken by the same control service that presses buttons
+(`AccessibilityService.takeScreenshot`). Without a token it takes none; with one, it takes one per
+request and keeps nothing. `/state.control.screen` says whether `/screen.jpg` answers here, and
+`screenUnavailable` why not. The token itself is never reported.
 
 ### Permission screen
 
@@ -1326,6 +1413,10 @@ Returns the current state as JSON:
   }
 }
 ```
+
+Since v0.33.0 `foreground` is [the app in front](#the-app-in-front) (`null` without usage access),
+`permissions.usage` says whether that access is there, and `control` has `screen` and
+`screenUnavailable` for [the picture of the screen](#a-picture-of-the-screen).
 
 Since v0.32.0 `control` also has `click` (the control service is on), `tap` (it may tap, since
 0.32.0-beta.2) and `clickPackages` (the apps it may press in), and `media` is what plays, as in

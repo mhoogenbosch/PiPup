@@ -15,9 +15,34 @@ import android.util.Log
 ///
 /// `--es packages ""` clears the list; without the extra the list is only reported. The
 /// broadcast result is `result=1, data="<the list now, comma-separated>"`.
+///
+/// The same door sets the token that switches `GET /screen.jpg` on (0.33.0, #89):
+///
+///     adb shell am broadcast -f 0x20 -n nl.rogro82.pipup/.ControlConfigReceiver \
+///         -a nl.rogro82.pipup.SET_SCREEN_TOKEN --es token "<16-128 of A-Z a-z 0-9 _ ->"
+///
+/// `--es token ""` switches it off; without the extra the state is only reported. The result
+/// is `data="on"`, `"off"` or `"invalid"` (not a valid token, nothing changed); never the token.
 class ControlConfigReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_SET_SCREEN_TOKEN) {
+            var valid = true
+            if (intent.hasExtra(EXTRA_TOKEN)) {
+                valid = ScreenShots.setToken(context, intent.getStringExtra(EXTRA_TOKEN))
+                Log.i(LOG_TAG, if (!valid) "screenshot token refused: not 16-128 of A-Z a-z 0-9 _ -"
+                    else "screenshot ${if (ScreenShots.enabled(context)) "on" else "off"}")
+            }
+            if (isOrderedBroadcast) {
+                resultCode = 1
+                resultData = when {
+                    !valid -> "invalid"
+                    ScreenShots.enabled(context) -> "on"
+                    else -> "off"
+                }
+            }
+            return
+        }
         if (intent.action != ACTION_SET_CLICK_PACKAGES) return
         if (intent.hasExtra(EXTRA_PACKAGES)) {
             val given = intent.getStringExtra(EXTRA_PACKAGES)
@@ -37,5 +62,7 @@ class ControlConfigReceiver : BroadcastReceiver() {
         const val LOG_TAG = "PiPupControlConfig"
         const val ACTION_SET_CLICK_PACKAGES = "nl.rogro82.pipup.SET_CLICK_PACKAGES"
         const val EXTRA_PACKAGES = "packages"
+        const val ACTION_SET_SCREEN_TOKEN = "nl.rogro82.pipup.SET_SCREEN_TOKEN"
+        const val EXTRA_TOKEN = "token"
     }
 }

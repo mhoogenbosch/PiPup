@@ -31,8 +31,9 @@ import android.view.KeyEvent
 /// * **home / back** - only with the accessibility service enabled (the same opt-in that
 ///   already serves as the screen-off fallback); otherwise reported as unavailable.
 ///
-/// The app cannot tell which app is in the foreground (that needs usage-access, a grant
-/// a TV has no screen for), so a controller only learns what *it* launched last.
+/// Which app is in the foreground takes usage access, a grant a TV has no screen for: without
+/// it a controller only learns what *it* launched last. Granted over adb, ForegroundApp
+/// (0.33.0, #88) reports the app in front.
 object TvControl {
 
     const val LOG_TAG = "TvControl"

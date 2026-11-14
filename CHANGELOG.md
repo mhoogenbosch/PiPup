@@ -9,6 +9,29 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v0.33.0-beta.1] — 2026-11-14 (test release for #88 and #89: the app in front, a picture of the screen)
+A **prerelease**, on top of 0.32.0-beta.5. Asked for by @Ltek (#83) and @DragonFlye (ha-pipup #61).
+Both additions are off until you switch them on over adb.
+### Added
+- **The app in front** (#88): `/state.foreground` is `{"package", "label", "since"}`, also when
+  nothing plays (the launcher, a menu, an app without a media session). It takes usage access:
+  `adb shell appops set nl.rogro82.pipup GET_USAGE_STATS allow`, or `install.sh --apps` /
+  `install.ps1 -Apps`. Without it `foreground` is `null`; `/state.permissions.usage` says whether the
+  access is there. With a webhook, a change is pushed as event `foreground` within about 5 seconds
+  while the screen is on. Only package names and times are read.
+- **A picture of the screen** (#89): `GET /screen.jpg?width=160-1920` (640 by default) answers one
+  JPEG, on **Android 11 and up**. Off until a token is set over adb, and it answers only a request that
+  carries that token in `X-PiPup-Token` or `Authorization: Bearer`. `install.sh --screen` /
+  `install.ps1 -Screen` enables the control service, sets a random token and prints it once;
+  `--screen-token` takes your own, `--no-screen` switches it off. 401 without the token, 409 with the
+  screen off, 429 when asked too fast, 501 when it cannot. `/state.control.screen` and
+  `screenUnavailable` say whether it answers here. Protected video comes out black.
+### Changed
+- The control service now declares that it can take a screenshot. A service that was already on keeps
+  its old capabilities after the update until it is switched off and on (`install.sh --screen` and
+  `--click` do that). Its description on the TV says what it does with a token set.
+- `--no-click` no longer switches the control service off when `--screen` is given in the same call.
+
 ## [v0.32.0-beta.5] — 2026-11-13 (fifth test release for #83: artwork that follows YouTube)
 A **prerelease**, like the betas before. Only the artwork key changes; everything else is beta.4.
 ### Fixed
