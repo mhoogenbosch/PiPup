@@ -43,6 +43,8 @@ object ForegroundApp {
     @Volatile private var seen: Seen? = null
     private var queriedUntil = 0L
     private var poller: ScheduledExecutorService? = null
+    /// the package of the last push; only touched on the poll thread
+    private var pushed: String? = null
 
     /// Called (on the poll thread) when another app came to the front.
     @Volatile var onChange: (() -> Unit)? = null
@@ -111,9 +113,13 @@ object ForegroundApp {
             it.scheduleWithFixedDelay({
                 try {
                     if (power.isInteractive) {
-                        val before = seen?.pkg
-                        val after = current(app)?.pkg
-                        if (after != before) onChange?.invoke()
+                        // against what was last pushed, not against `seen`: a /state
+                        // request in between also moves `seen` on
+                        val front = current(app)?.pkg
+                        if (front != pushed) {
+                            pushed = front
+                            onChange?.invoke()
+                        }
                     }
                 } catch (ex: Throwable) {
                     Log.w(LOG_TAG, "poll failed: ${ex.message}")
