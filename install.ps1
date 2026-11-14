@@ -45,8 +45,24 @@ param(
     # com.plexapp.android): enables the separate "PiPup control" accessibility service
     [string]$Click,
 
-    # switch the control service off and clear the list of apps
-    [switch]$NoClick
+    # switch the control service off and clear the list of apps (that also stops the
+    # screenshot, unless -Screen is given too)
+    [switch]$NoClick,
+
+    # app >= 0.33.0: give usage access, so /state says which app is in front, also when
+    # nothing plays. Package names only
+    [switch]$Apps,
+
+    # app >= 0.33.0, Android 11+: switch GET /screen.jpg on, a picture of the screen for a
+    # request that carries the token. Enables the "PiPup control" service and sets a new
+    # random token, which is printed once. Off by default
+    [switch]$Screen,
+
+    # like -Screen, with your own token (16-128 of A-Z a-z 0-9 _ -)
+    [string]$ScreenToken,
+
+    # switch the screenshot off (clears the token)
+    [switch]$NoScreen
 )
 
 $ErrorActionPreference = 'Continue'
@@ -66,6 +82,17 @@ function Write-Fail  { param($m) Write-Host "  [x]  $m" -ForegroundColor Red }
 # the list goes into a remote shell command: package names only
 if ($Click -and $Click -notmatch '^[A-Za-z0-9._,]+$') {
     Write-Fail '-Click: only package names, separated by commas'
+    exit 2
+}
+
+# the token goes into a remote shell command too, and the app accepts nothing else
+if ($ScreenToken) { $Screen = $true }
+if ($Screen -and $NoScreen) {
+    Write-Fail '-Screen and -NoScreen together'
+    exit 2
+}
+if ($ScreenToken -and $ScreenToken -notmatch '^[A-Za-z0-9_-]{16,128}$') {
+    Write-Fail '-ScreenToken: 16 to 128 of A-Z a-z 0-9 _ -'
     exit 2
 }
 
@@ -253,23 +280,31 @@ foreach ($device in $Devices) {
         }
     }
 
+    # 0.33.0 (#88): usage access, for `foreground` in /state. A TV has no screen for it.
+    if ($Apps) {
+        adb -s $target shell "appops set $Package GET_USAGE_STATS allow" | Out-Null
+        Write-Host '  - usage access requested (verifying below)'
+    }
+
     # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
     # The list can only be set like this (adb), never over the LAN.
+    # 0.33.0 (#89): the same service takes the picture for GET /screen.jpg.
     $clickList = $null
-    if ($Click) {
+    if ($Click -or $Screen) {
         $current = ((adb -s $target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
         if (Test-Component $current $ControlComponent) {
             # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
             # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
-            Disable-Accessibility $target $ControlComponent 'control service (click), restarting:'
+            # The same goes for the screenshot capability of 0.33.0.
+            Disable-Accessibility $target $ControlComponent 'control service, restarting:'
             Start-Sleep -Seconds 2
         }
-        Enable-Accessibility $target $ControlComponent 'control service (click)'
-        $clickList = $Click
+        Enable-Accessibility $target $ControlComponent 'control service'
     } elseif ($NoClick) {
-        Disable-Accessibility $target $ControlComponent 'control service (click)'
-        $clickList = ''
+        Disable-Accessibility $target $ControlComponent 'control service'
     }
+    if ($Click) { $clickList = $Click }
+    if ($NoClick) { $clickList = '' }
     if ($null -ne $clickList) {
         $result = (adb -s $target shell "am broadcast -f 0x20 -n $Package/.ControlConfigReceiver -a $Package.SET_CLICK_PACKAGES --es packages '$clickList'" 2>&1) -join ' '
         if ($result -match 'result=1') {
@@ -277,6 +312,37 @@ foreach ($device in $Devices) {
             Write-Ok "click allowed in: $(if ($allowed) { $allowed } else { 'no app' })"
         } else {
             Write-Fail "could not set the click list (app older than 0.32.0?): $result"
+        }
+    }
+
+    # 0.33.0 (#89): the token that switches GET /screen.jpg on; empty switches it off.
+    # Like the click list it can only be set like this (adb), never over the LAN.
+    if ($Screen -or $NoScreen) {
+        $token = ''
+        if ($Screen) {
+            $token = $ScreenToken
+            if (-not $token) {
+                $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+                $bytes = New-Object byte[] 32
+                $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+                $rng.GetBytes($bytes)
+                $rng.Dispose()
+                $token = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+            }
+            $sdk = ((adb -s $target shell 'getprop ro.build.version.sdk' 2>$null) -join '').Trim()
+            if ([int]("0$sdk") -lt 30) { Write-Warn 'Android older than 11: this TV cannot take a screenshot' }
+        }
+        $result = (adb -s $target shell "am broadcast -f 0x20 -n $Package/.ControlConfigReceiver -a $Package.SET_SCREEN_TOKEN --es token '$token'" 2>&1) -join ' '
+        if ($result -match 'data="on"') {
+            Write-Ok "screenshot on: GET http://${tvHost}:$Port/screen.jpg"
+            if (-not $ScreenToken) {
+                Write-Host "    token (shown once, keep it): $token"
+                Write-Host "    curl -H 'X-PiPup-Token: $token' -o screen.jpg http://${tvHost}:$Port/screen.jpg"
+            }
+        } elseif ($result -match 'data="off"') {
+            Write-Ok 'screenshot off'
+        } else {
+            Write-Fail "could not set the screenshot token (app older than 0.33.0?): $result"
         }
     }
 
@@ -313,6 +379,20 @@ foreach ($device in $Devices) {
                 Write-Ok 'media sessions readable (GET /media)'
             } else {
                 Write-Warn "media sessions NOT readable yet: $($state.media.reason)"
+            }
+        }
+        if ($Apps) {
+            if ($state.permissions.usage) {
+                Write-Ok 'app in front readable (foreground in /state)'
+            } else {
+                Write-Warn 'usage access NOT granted (app older than 0.33.0, or this Android refuses it)'
+            }
+        }
+        if ($Screen) {
+            if ($state.control.screen) {
+                Write-Ok 'screenshot available'
+            } else {
+                Write-Warn "screenshot NOT available: $($state.control.screenUnavailable)"
             }
         }
         if ($Power -or $Accessibility) {

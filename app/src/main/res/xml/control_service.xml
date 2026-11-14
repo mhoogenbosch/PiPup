@@ -9,11 +9,14 @@
      /click request runs, under the same list.
      flagIncludeNotImportantViews (0.32.0-beta.2): see the same views as `uiautomator dump`, where
      people look up the ids; without it an image without a description (SmartTube's main_image)
-     could not be found. Set again at runtime in onServiceConnected, see there. -->
+     could not be found. Set again at runtime in onServiceConnected, see there.
+     canTakeScreenshot (0.33.0, #89): for GET /screen.jpg on Android 11+. Nothing is taken
+     until a token is set over adb, and then only for a request that carries it (ScreenShots). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
         android:accessibilityFeedbackType="feedbackGeneric"
         android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
         android:canPerformGestures="true"
         android:canRetrieveWindowContent="true"
+        android:canTakeScreenshot="true"
         android:description="@string/control_service_description"
         android:notificationTimeout="0"/>

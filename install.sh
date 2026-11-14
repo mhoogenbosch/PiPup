@@ -32,6 +32,10 @@ GRANT_MEDIA=0
 CLICK_PACKAGES=""
 CLICK_SET=0
 NO_CLICK=0
+GRANT_APPS=0
+SCREEN=0
+SCREEN_TOKEN=""
+NO_SCREEN=0
 DEVICES=()
 
 usage() {
@@ -54,7 +58,16 @@ Options:
                       com.plexapp.android; app >= 0.32.0): enables the separate
                       "PiPup control" accessibility service and sets the list.
                       Other apps stay refused
-  --no-click          switch the control service off and clear that list
+  --no-click          switch the control service off and clear that list (that
+                      also stops the screenshot, unless --screen is given too)
+  --apps              give usage access (app >= 0.33.0): /state then says which app
+                      is in front, also when nothing plays. Package names only
+  --screen            switch GET /screen.jpg on (app >= 0.33.0, Android 11+): a
+                      picture of the screen for a request that carries the token.
+                      Enables the "PiPup control" service and sets a new random
+                      token, which is printed once. Off by default
+  --screen-token <t>  like --screen, with your own token (16-128 of A-Z a-z 0-9 _ -)
+  --no-screen         switch the screenshot off (clears the token)
   --force-uninstall   uninstall first when the signature differs
                       (WARNING: wipes the app's stable device id, so Home Assistant
                       sees a new device)
@@ -84,6 +97,10 @@ while [ $# -gt 0 ]; do
         --media)            GRANT_MEDIA=1; shift ;;
         --click)            CLICK_PACKAGES="${2?--click needs a package list}"; CLICK_SET=1; shift 2 ;;
         --no-click)         NO_CLICK=1; shift ;;
+        --apps)             GRANT_APPS=1; shift ;;
+        --screen)           SCREEN=1; shift ;;
+        --screen-token)     SCREEN_TOKEN="${2:?--screen-token needs a token}"; SCREEN=1; shift 2 ;;
+        --no-screen)        NO_SCREEN=1; shift ;;
         -h|--help)          usage; exit 0 ;;
         -*)                 err "unknown option: $1"; usage; exit 2 ;;
         *)                  DEVICES+=("$1"); shift ;;
@@ -98,6 +115,18 @@ fi
 case "$CLICK_PACKAGES" in
     *[!A-Za-z0-9._,]*) err "--click: only package names, separated by commas"; exit 2 ;;
 esac
+# the token goes into a remote shell command too, and the app accepts nothing else
+if [ "$SCREEN" -eq 1 ] && [ "$NO_SCREEN" -eq 1 ]; then
+    err "--screen and --no-screen together"; exit 2
+fi
+if [ -n "$SCREEN_TOKEN" ]; then
+    case "$SCREEN_TOKEN" in
+        *[!A-Za-z0-9_-]*) err "--screen-token: only A-Z a-z 0-9 _ -"; exit 2 ;;
+    esac
+    if [ ${#SCREEN_TOKEN} -lt 16 ] || [ ${#SCREEN_TOKEN} -gt 128 ]; then
+        err "--screen-token: 16 to 128 characters"; exit 2
+    fi
+fi
 
 # Whether the ':'-separated list $1 holds component $2, in the full (pkg/pkg.Cls) or the
 # short (pkg/.Cls) form. Matches the whole component: since 0.32.0 PiPup has two
@@ -283,21 +312,29 @@ for device in "${DEVICES[@]}"; do
         fi
     fi
 
+    # 0.33.0 (#88): usage access, for `foreground` in /state. A TV has no screen for it.
+    if [ "$GRANT_APPS" -eq 1 ]; then
+        adb -s "$target" shell "appops set $PACKAGE GET_USAGE_STATS allow" >/dev/null 2>&1 \
+            && log "  · usage access requested (verifying below)" || warn "could not grant GET_USAGE_STATS"
+    fi
+
     # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
     # The list can only be set like this (adb), never over the LAN.
-    if [ "$CLICK_SET" -eq 1 ]; then
+    # 0.33.0 (#89): the same service takes the picture for GET /screen.jpg.
+    if [ "$CLICK_SET" -eq 1 ] || [ "$SCREEN" -eq 1 ]; then
         current=$(adb -s "$target" shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r')
         if has_component "$current" "$CONTROL_COMPONENT"; then
             # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
             # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
-            disable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click), restarting:"
+            # The same goes for the screenshot capability of 0.33.0.
+            disable_accessibility "$target" "$CONTROL_COMPONENT" "control service, restarting:"
             sleep 2
         fi
-        enable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click)"
+        enable_accessibility "$target" "$CONTROL_COMPONENT" "control service"
     elif [ "$NO_CLICK" -eq 1 ]; then
-        disable_accessibility "$target" "$CONTROL_COMPONENT" "control service (click)"
-        CLICK_PACKAGES=""
+        disable_accessibility "$target" "$CONTROL_COMPONENT" "control service"
     fi
+    [ "$NO_CLICK" -eq 1 ] && CLICK_PACKAGES=""
     if [ "$CLICK_SET" -eq 1 ] || [ "$NO_CLICK" -eq 1 ]; then
         result=$(adb -s "$target" shell "am broadcast -f 0x20 -n $PACKAGE/.ControlConfigReceiver -a $PACKAGE.SET_CLICK_PACKAGES --es packages '$CLICK_PACKAGES'" 2>&1 | tr -d '\r')
         if printf '%s' "$result" | grep -q 'result=1'; then
@@ -306,6 +343,29 @@ for device in "${DEVICES[@]}"; do
         else
             err "could not set the click list (app older than 0.32.0?): $(printf '%s' "$result" | tr '\n' ' ')"
         fi
+    fi
+
+    # 0.33.0 (#89): the token that switches GET /screen.jpg on; empty switches it off.
+    # Like the click list it can only be set like this (adb), never over the LAN.
+    if [ "$SCREEN" -eq 1 ] || [ "$NO_SCREEN" -eq 1 ]; then
+        token=""
+        if [ "$SCREEN" -eq 1 ]; then
+            token="$SCREEN_TOKEN"
+            [ -n "$token" ] || token=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
+            sdk=$(adb -s "$target" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')
+            [ "${sdk:-0}" -ge 30 ] || warn "Android older than 11: this TV cannot take a screenshot"
+        fi
+        result=$(adb -s "$target" shell "am broadcast -f 0x20 -n $PACKAGE/.ControlConfigReceiver -a $PACKAGE.SET_SCREEN_TOKEN --es token '$token'" 2>&1 | tr -d '\r')
+        case "$result" in
+            *'data="on"'*)
+                ok "screenshot on: GET http://$host:$PORT/screen.jpg"
+                if [ -z "$SCREEN_TOKEN" ]; then
+                    log "    token (shown once, keep it): $token"
+                    log "    curl -H 'X-PiPup-Token: $token' -o screen.jpg http://$host:$PORT/screen.jpg"
+                fi ;;
+            *'data="off"'*) ok "screenshot off" ;;
+            *) err "could not set the screenshot token (app older than 0.33.0?): $(printf '%s' "$result" | tr '\n' ' ')" ;;
+        esac
     fi
 
     # Bring the service up. Deliberately NOT via the activity by default: a
@@ -344,6 +404,22 @@ for device in "${DEVICES[@]}"; do
                 ok "media sessions readable (GET /media)"
             else
                 warn "media sessions NOT readable yet: $(printf '%s' "$state" | grep -o '"media":{"access":false,"reason":"[^"]*"' | cut -d'"' -f8)"
+            fi
+        fi
+
+        if [ "$GRANT_APPS" -eq 1 ]; then
+            if printf '%s' "$state" | grep -q '"usage":true'; then
+                ok "app in front readable (foreground in /state)"
+            else
+                warn "usage access NOT granted (app older than 0.33.0, or this Android refuses it)"
+            fi
+        fi
+
+        if [ "$SCREEN" -eq 1 ]; then
+            if printf '%s' "$state" | grep -q '"screen":true'; then
+                ok "screenshot available"
+            else
+                warn "screenshot NOT available: $(printf '%s' "$state" | grep -o '"screenUnavailable":"[^"]*"' | cut -d'"' -f4)"
             fi
         fi
 

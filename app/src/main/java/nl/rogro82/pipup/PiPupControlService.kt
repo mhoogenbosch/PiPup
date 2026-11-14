@@ -34,6 +34,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 /// * only when the app in front is on ClickPolicy's list, which is set over adb only,
 /// * and it answers whether the click happened, never what is on the screen.
 ///
+/// The one exception to that last line is switched on separately (0.33.0, #89): with a token
+/// set over adb, `GET /screen.jpg` answers a picture of the screen to a request that carries
+/// that token (Android 11+, see ScreenShots). Without a token this service takes no picture.
+///
 /// Since 0.32.0-beta.2 a press can also be a **tap**: a short touch on the centre of the view
 /// (dispatchGesture, Android 7+), for apps whose buttons take ACTION_CLICK but ignore it, such
 /// as Plex (React Native). After a press it watches the pressed view for up to 1.5 s and
@@ -163,6 +167,9 @@ class PiPupControlService : AccessibilityService() {
         private val busy = AtomicBoolean(false)
 
         fun connected(): Boolean = instance != null
+
+        /// The connected service, for ScreenShots (0.33.0); null when it is off.
+        internal fun service(): PiPupControlService? = instance
 
         /// Whether a tap can be sent: service on, Android 7+, the gesture capability granted
         /// (a service switched on before 0.32.0-beta.2 may need a restart for it), and a

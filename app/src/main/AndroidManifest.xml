@@ -17,6 +17,11 @@
     <!-- Screen on (POST /power?state=on): the wake lock is a best-effort second
          attempt next to WakeActivity's setTurnScreenOn. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 0.33.0 (#88): which app is in front, for `foreground` in /state. Declaring it grants
+         nothing: it only works after `adb shell appops set nl.rogro82.pipup GET_USAGE_STATS allow`. -->
+    <uses-permission
+            android:name="android.permission.PACKAGE_USAGE_STATS"
+            tools:ignore="ProtectedPermissions" />
 
     <!-- Package visibility (Android 11+): resolveActivity() is a *query* and is filtered,
          even though startActivity() is not. Without these declarations the app cannot see
@@ -45,6 +50,11 @@
         <intent>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+        <!-- 0.33.0 (#88): the launcher itself, so `foreground` can name it -->
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.HOME"/>
         </intent>
     </queries>
 
@@ -142,7 +152,8 @@
 
         <!-- "PiPup control" (0.32.0, #83): presses a button in an app on POST /click. Separate
              from the service above, which keeps observing nothing; off until enabled over adb,
-             and only acts for apps on the adb-set list (ControlConfigReceiver). -->
+             and only acts for apps on the adb-set list (ControlConfigReceiver). Since 0.33.0
+             (#89) it also takes the picture for GET /screen.jpg, only with an adb-set token. -->
         <service
                 android:name=".PiPupControlService"
                 android:label="@string/control_service_label"
@@ -156,7 +167,8 @@
                     android:resource="@xml/control_service"/>
         </service>
 
-        <!-- Sets the apps the control service may press buttons in. Guarded by
+        <!-- Sets the apps the control service may press buttons in, and (0.33.0, #89) the token
+             that switches GET /screen.jpg on. Guarded by
              WRITE_SECURE_SETTINGS: the adb shell holds it, ordinary apps do not, so the list
              cannot be changed from the LAN or by another app. -->
         <receiver
@@ -165,6 +177,7 @@
                 android:permission="android.permission.WRITE_SECURE_SETTINGS">
             <intent-filter>
                 <action android:name="nl.rogro82.pipup.SET_CLICK_PACKAGES"/>
+                <action android:name="nl.rogro82.pipup.SET_SCREEN_TOKEN"/>
             </intent-filter>
         </receiver>
 
