@@ -1243,7 +1243,7 @@ request and keeps nothing. `/state.control.screen` says whether `/screen.jpg` an
 
 | Property      | Value                                                    |
 | ------------- | -------------------------------------------------------- |
-| Path:         | /permissions/fix[?what=overlay\|install\|admin\|accessibility\|next] |
+| Path:         | /permissions/fix[?what=overlay\|install\|admin\|accessibility\|usage\|media\|next] |
 | Method:       | POST                                                     |
 
 Since 0.8.0. Puts the screen that grants a permission in front of the user and wakes the TV first.
@@ -1276,6 +1276,14 @@ Measured on hardware:
 
 `/state` publishes this as `permissions.fixable`, so a controller can show a button only where it
 leads somewhere.
+
+Since 1.1.0 the status screen also has rows for **what plays** (notification-listener access, for
+`/media`) and **the app in front** (usage access), with a Fix button that opens the system's list of
+apps for that access — find PiPup in it and switch it on — and the adb command where the device has no
+such list; `what=usage` and `what=media` do the same from a controller. On Android 13 and up a
+**Notifications** row asks for the notification permission with the system's own prompt (this one
+only works from the TV: a prompt needs a visible window). All three are optional; popups work without
+them. `what=next` still walks the popup-related grants only.
 
 #### Permissions the device blocks outright
 
@@ -1420,6 +1428,10 @@ Returns the current state as JSON:
   }
 }
 ```
+
+Since 1.1.0 `permissions` also has `media` (notification-listener access, for `/media`) and
+`notifications` (the Android 13+ notification permission; `null` below 13), and `fixable` lists
+`usage` and `media` too.
 
 Since 1.0.0 `foreground` is [the app in front](#the-app-in-front) (`null` without usage access),
 `permissions.usage` says whether that access is there, and `control` has `screen` and

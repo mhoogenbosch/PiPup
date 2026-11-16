@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 
 /// What PiPup was actually granted on this device.
 ///
@@ -90,6 +91,23 @@ object Permissions {
     /// power-related grants are reported separately: they are optional.
     fun complete(context: Context): Boolean = overlay(context)
 
+    /// Notification-listener access (1.0.0, #83): what Android asks before it lists the
+    /// media sessions. Checked by package: the one listener this app has is the media one.
+    fun mediaListener(context: Context): Boolean = try {
+        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    } catch (ex: Throwable) {
+        Log.e(LOG_TAG, "Cannot query listener access: ${ex.message}")
+        false
+    }
+
+    /// POST_NOTIFICATIONS (Android 13+): without it the ongoing "Service running"
+    /// notification is hidden - and tapping it is the route [BLOCKED_ERROR] points to.
+    /// null below Android 13, where the permission does not exist.
+    fun notifications(context: Context): Boolean? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) try {
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        } catch (_: Throwable) { false } else null
+
     fun granted(context: Context, key: String): Boolean? = when (key) {
         KEY_OVERLAY -> overlay(context)
         KEY_INSTALL -> installPackages(context)
@@ -105,6 +123,10 @@ object Permissions {
         }
         KEY_ACCESSIBILITY -> PiPupAccessibilityService.enabledInSettings(context)
         KEY_AUTO_START -> autoStart(context)
+        // 1.1.0: the two that were adb-only until now, and the Android 13 prompt
+        KEY_USAGE -> ForegroundApp.granted(context)
+        KEY_MEDIA -> mediaListener(context)
+        KEY_NOTIFICATIONS -> notifications(context)
         else -> null
     }
 
@@ -114,16 +136,14 @@ object Permissions {
         "autoStart" to autoStart(context),
         "deviceAdmin" to granted(context, KEY_ADMIN),
         "accessibility" to PiPupAccessibilityService.enabledInSettings(context),
-        // 0.33.0 (#88): usage access, for `foreground` in /state; adb only, optional
+        // 0.33.0 (#88): usage access, for `foreground` in /state; optional
         "usage" to ForegroundApp.granted(context),
+        // 1.1.0: listener access for /media, and the Android 13+ notification permission
+        "media" to mediaListener(context),
+        "notifications" to notifications(context),
         "complete" to complete(context),
         // which of these the app can hand to the user on screen (see fixIntent)
-        "fixable" to mapOf(
-            KEY_OVERLAY to (fixIntent(context, KEY_OVERLAY) != null),
-            KEY_INSTALL to (fixIntent(context, KEY_INSTALL) != null),
-            KEY_ADMIN to (fixIntent(context, KEY_ADMIN) != null),
-            KEY_ACCESSIBILITY to (fixIntent(context, KEY_ACCESSIBILITY) != null)
-        )
+        "fixable" to FIXABLE_KEYS.associateWith { fixIntent(context, it) != null }
     )
 
     /// The adb command that grants this one, for the devices where the on-screen
@@ -136,6 +156,8 @@ object Permissions {
             "adb shell settings put secure enabled_accessibility_services " +
                     "<huidige waarde>:$PACKAGE/$PACKAGE.PiPupAccessibilityService"
         KEY_AUTO_START -> "adb shell cmd appops set $PACKAGE android:auto_start allow"
+        KEY_USAGE -> "adb shell appops set $PACKAGE GET_USAGE_STATS allow"
+        KEY_MEDIA -> "adb shell cmd notification allow_listener $PACKAGE/$PACKAGE.MediaListenerService"
         else -> ""
     }
 
@@ -162,6 +184,9 @@ object Permissions {
             )
         }
         KEY_ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        // 1.1.0: both are lists of apps, not per-package screens; the user finds PiPup in them
+        KEY_USAGE -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        KEY_MEDIA -> Intent(ACTION_NOTIFICATION_LISTENER_SETTINGS)
         else -> null
     }
 
@@ -198,6 +223,7 @@ object Permissions {
     private fun opFor(key: String): String? = when (key) {
         KEY_OVERLAY -> "android:system_alert_window"
         KEY_INSTALL -> "android:request_install_packages"
+        KEY_USAGE -> "android:get_usage_stats"
         else -> null
     }
 
@@ -218,7 +244,13 @@ object Permissions {
         // that leads nowhere - callers fall back to showing the adb command.
         if (opBlocked(context, key)) return null
         val intent = rawIntent(context, key) ?: return null
-        return if (isPlaceholder(resolvedActivity(context, intent))) null else intent
+        val resolved = resolvedActivity(context, intent)
+        // "Nothing resolved" is only ambiguous from Android 11 on, where package visibility
+        // can hide a real screen. Below that it is the truth: measured on a Mi Box 4
+        // (Android 9), whose TV settings have no overlay, listener or admin screen - the
+        // button threw ActivityNotFoundException on every press and visibly did nothing.
+        if (resolved == null && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return if (isPlaceholder(resolved)) null else intent
     }
 
     /// Put the screen that grants `key` in front of the user. Returns false when this
@@ -272,8 +304,9 @@ object Permissions {
         false
     }
 
-    /// First permission that is missing and has an on-screen route, if any.
-    fun firstMissing(context: Context): String? = FIXABLE_KEYS.firstOrNull {
+    /// First permission that is missing and has an on-screen route, if any. Walks the
+    /// popup-related grants only: `next` should not land someone in usage access.
+    fun firstMissing(context: Context): String? = CORE_KEYS.firstOrNull {
         granted(context, it) == false && fixIntent(context, it) != null
     }
 
@@ -292,7 +325,8 @@ object Permissions {
         // resets to) and "ignored" into the same false - these do not.
         "opModes" to mapOf(
             "installPackages" to opMode(context, "android:request_install_packages"),
-            "overlay" to opMode(context, "android:system_alert_window")
+            "overlay" to opMode(context, "android:system_alert_window"),
+            "usage" to opMode(context, "android:get_usage_stats")
         ),
         "installCheckError" to mInstallCheckError,
         // App-ops are per user: a Settings screen looked at under another profile
@@ -380,9 +414,22 @@ object Permissions {
     const val KEY_ADMIN = "admin"
     const val KEY_ACCESSIBILITY = "accessibility"
     const val KEY_AUTO_START = "autoStart"
+    /// 1.1.0: usage access (the app in front), listener access (what plays) and the
+    /// Android 13+ notification permission
+    const val KEY_USAGE = "usage"
+    const val KEY_MEDIA = "media"
+    const val KEY_NOTIFICATIONS = "notifications"
 
     /// Order matters: this is what "fix the first thing that is missing" walks through.
-    val FIXABLE_KEYS = listOf(KEY_OVERLAY, KEY_INSTALL, KEY_ADMIN, KEY_ACCESSIBILITY)
+    val CORE_KEYS = listOf(KEY_OVERLAY, KEY_INSTALL, KEY_ADMIN, KEY_ACCESSIBILITY)
+
+    /// Everything with a settings screen somewhere (POST /permissions/fix?what=). The
+    /// notification permission is not here: it is a runtime prompt, which only a visible
+    /// activity can show (MainActivity does), never a request from the LAN.
+    val FIXABLE_KEYS = CORE_KEYS + listOf(KEY_USAGE, KEY_MEDIA)
+
+    /// The constant exists since API 22 but is hidden from the SDK on some levels.
+    private const val ACTION_NOTIFICATION_LISTENER_SETTINGS = "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"
 
     /// Said in one line, because it travels to Home Assistant and into bug reports.
     const val BLOCKED_ERROR =

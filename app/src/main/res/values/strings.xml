@@ -40,4 +40,11 @@
     <string name="status_ha_pipup_too_old">ha-pipup %1$s is too old for this app — install %2$s or newer</string>
     <string name="status_ha_pipup_recommended">recommended ha-pipup: %1$s (no integration seen yet)</string>
     <string name="permission_overlay_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
+    <string name="permission_media">What plays (media sessions)</string>
+    <string name="permission_media_why">Lets /media and Home Assistant see what is playing. Find PiPup in the list and switch it on.</string>
+    <string name="permission_usage">App in front (usage access)</string>
+    <string name="permission_usage_why">Lets /state say which app is in front. Find PiPup in the list and switch it on.</string>
+    <string name="permission_notifications">Notifications</string>
+    <string name="permission_notifications_why">Shows the "Service running" notification, the tap-to-open route when the overlay permission is missing.</string>
+    <string name="permission_fix_failed">This TV has no screen for it. Grant it over adb:\n%1$s</string>
 </resources>

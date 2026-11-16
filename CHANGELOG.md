@@ -7,7 +7,17 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
-## [Unreleased — v1.0.0]
+## [Unreleased — v1.1.0]
+### Added
+- **More Fix buttons**: notification-listener access (what plays) and usage access (the app in front)
+  open the system's list of apps for them instead of being adb-only; `POST /permissions/fix?what=media`
+  and `what=usage` do the same from a controller. On Android 13+ a *Notifications* row asks for the
+  notification permission with the system's prompt. `permissions.media` and `permissions.notifications`
+  are in `/state`.
+### Changed
+- `permissions.fixable` in `/state` also lists `usage` and `media`.
+
+## [1.0.0]
 Everything from the 0.32.0 and 0.33.0 test releases (#83, #88, #89), in one release. There is no 0.32.0
 or 0.33.0 release. With these PiPup covers almost everything the Android TV (ADB) integration of Home
 Assistant offers, so it gets a new major number. **Nothing breaks:** everything new is off until you grant
