@@ -7,7 +7,20 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
-## [Unreleased — v1.0.0]
+## [Unreleased — v1.1.0]
+### Added
+- **MQTT**: the TV connects to your broker and takes the whole API as topics, so nothing needs its
+  address. `<prefix>/<name>/cmd/<endpoint>` is `POST /<endpoint>` (`notify` with the popup JSON, the
+  rest with a JSON object as the query parameters); the answer comes back on `…/result/<endpoint>`;
+  `/state` is published retained on `…/state` and once per event on `…/event`; `…/availability` is
+  `online`/`offline` with a last will. `pipup/all/cmd/#` reaches every TV. Same code path as HTTP.
+  A popup button press is published on `…/button`, with or without a `callback` URL.
+- **A settings screen on the TV** (the *Settings* button on the status screen): the MQTT broker, port,
+  TLS, username, password, topic prefix and a name for the TV, and a switch for **HTTP on the network**
+  (off = loopback only, no mDNS). Set on the TV only, never over `/settings`: that has no login.
+  `/state.http` and `/state.mqtt` report both, without the password.
+
+## [1.0.0]
 Everything from the 0.32.0 and 0.33.0 test releases (#83, #88, #89), in one release. There is no 0.32.0
 or 0.33.0 release. With these PiPup covers almost everything the Android TV (ADB) integration of Home
 Assistant offers, so it gets a new major number. **Nothing breaks:** everything new is off until you grant

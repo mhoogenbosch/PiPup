@@ -49,27 +49,12 @@ class MainActivity : Activity() {
 
         // start service in foreground
 
-        val textViewConnection = findViewById<TextView>(R.id.textViewConnection)
-        val textViewServerAddress = findViewById<TextView>(R.id.textViewServerAddress)
+        refreshAddress()
 
-        when(val ipAddress = getIpAddress()) {
-            is String -> {
-                textViewConnection.setText(R.string.server_running)
-                textViewServerAddress.apply {
-                    visibility = View.VISIBLE
-                    text = resources.getString(
-                        R.string.server_address,
-                        ipAddress,
-                        PiPupService.SERVER_PORT
-                    )
-                }
-            }
-            else -> {
-                textViewConnection.setText(R.string.no_network_connection)
-                textViewServerAddress.visibility = View.INVISIBLE
-            }
+        // 1.1.0: HTTP on/off, MQTT broker and credentials - on the TV, with the remote
+        findViewById<Button>(R.id.buttonSettings)?.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
-
 
         val serviceIntent = Intent(this, PiPupService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -131,7 +116,32 @@ class MainActivity : Activity() {
         // exemptions from the background-activity-launch restriction, and on a TV without
         // the overlay permission it is the only one available.
         Permissions.onActivityResumed()
+        refreshAddress()   // back from the settings screen: the HTTP switch may have moved
         mHandler.post(mRefresh)
+    }
+
+    /// The header: where the HTTP API answers, or that it is off for the network (1.1.0).
+    private fun refreshAddress() {
+        val textViewConnection = findViewById<TextView>(R.id.textViewConnection)
+        val textViewServerAddress = findViewById<TextView>(R.id.textViewServerAddress)
+        val lan = PiPupService.prefs(this).getBoolean(PiPupService.PREF_HTTP_LAN, true)
+        when (val ipAddress = getIpAddress()) {
+            is String -> {
+                textViewConnection.setText(if (lan) R.string.server_running else R.string.server_lan_off)
+                textViewServerAddress.apply {
+                    visibility = if (lan) View.VISIBLE else View.INVISIBLE
+                    text = resources.getString(
+                        R.string.server_address,
+                        ipAddress,
+                        PiPupService.SERVER_PORT
+                    )
+                }
+            }
+            else -> {
+                textViewConnection.setText(R.string.no_network_connection)
+                textViewServerAddress.visibility = View.INVISIBLE
+            }
+        }
     }
 
     override fun onPause() {

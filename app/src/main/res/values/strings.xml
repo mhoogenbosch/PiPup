@@ -40,4 +40,30 @@
     <string name="status_ha_pipup_too_old">ha-pipup %1$s is too old for this app — install %2$s or newer</string>
     <string name="status_ha_pipup_recommended">recommended ha-pipup: %1$s (no integration seen yet)</string>
     <string name="permission_overlay_blocked">This TV blocks turning it on from its settings screen. Grant it over adb:</string>
+    <string name="server_lan_off">HTTP server: off for the network (loopback only)</string>
+    <string name="settings_button">Settings</string>
+    <string name="settings_title">PiPup settings</string>
+    <string name="settings_http_switch">HTTP server on the network</string>
+    <string name="settings_http_why">Port 7979 on this TV\'s address. Home Assistant\'s ha-pipup integration and the install scripts need it. Off keeps it on loopback only.</string>
+    <string name="settings_mqtt_switch">MQTT</string>
+    <string name="settings_mqtt_why">PiPup connects to your broker, so nothing needs this TV\'s address. Commands arrive on the topic shown below; state is published next to it.</string>
+    <string name="settings_mqtt_host">Broker host or IP</string>
+    <string name="settings_mqtt_port">Port</string>
+    <string name="settings_mqtt_tls">TLS (ssl://)</string>
+    <string name="settings_mqtt_username">Username</string>
+    <string name="settings_mqtt_password">Password</string>
+    <string name="settings_mqtt_prefix">Topic prefix</string>
+    <string name="settings_mqtt_name">Topic name of this TV</string>
+    <string name="settings_mqtt_name_hint">empty = device id</string>
+    <string name="settings_mqtt_topic">Command topic: %1$s/cmd/&lt;endpoint&gt;</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_saved">Saved.</string>
+    <string name="settings_nothing_on">Both switches are off: nothing can reach this TV. Saved anyway.</string>
+    <string name="settings_invalid">Not saved: %1$s</string>
+    <string name="settings_status_http_on">HTTP: on the network at %1$s:%2$d</string>
+    <string name="settings_status_http_off">HTTP: loopback only</string>
+    <string name="settings_status_mqtt_off">MQTT: off</string>
+    <string name="settings_status_mqtt_connected">MQTT: connected to %1$s as %2$s</string>
+    <string name="settings_status_mqtt_error">MQTT: not connected — %1$s</string>
+    <string name="settings_status_mqtt_connecting">MQTT: connecting to %1$s…</string>
 </resources>

@@ -203,6 +203,13 @@
                 android:taskAffinity=""
                 android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 
+        <!-- 1.1.0: HTTP on/off, MQTT broker and credentials; on the TV only, never over the LAN -->
+        <activity
+                android:name=".SettingsActivity"
+                android:exported="false"
+                android:label="@string/settings_title"
+                android:windowSoftInputMode="adjustPan"/>
+
         <activity
                 android:name=".MainActivity"
                 android:exported="true"

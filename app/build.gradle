@@ -75,6 +75,12 @@ dependencies {
 
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
 
+    // MQTT (1.1.0): the plain Paho Java client. Pure Java, no transitive dependencies, runs
+    // at minSdk 23 without backports, reconnects by itself and carries a last-will. Not the
+    // Paho *Android service* (unmaintained, breaks on API 31+), and not HiveMQ (Netty, several
+    // MB on TVs that already fight the low-memory killer).
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+
     testImplementation 'junit:junit:4.13.2'
 
     // ExoPlayer (media3) — ALL video_url playback (rtsp, HLS, progressive http), rendered into a

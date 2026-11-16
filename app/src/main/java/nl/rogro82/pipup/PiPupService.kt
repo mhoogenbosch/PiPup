@@ -108,6 +108,8 @@ class PiPupService : Service(), WebServer.Handler {
     private val mPopupsShown = java.util.concurrent.atomic.AtomicLong(0)
     private val mStartedAt: Long = SystemClock.elapsedRealtime()
     private lateinit var mWebServer: WebServer
+    /// whether the web server listens on the LAN (true) or on loopback only (1.1.0)
+    private var mHttpLan: Boolean = true
 
     private var mNsdManager: NsdManager? = null
     private var mNsdListener: NsdManager.RegistrationListener? = null
@@ -139,7 +141,10 @@ class PiPupService : Service(), WebServer.Handler {
         // 2026-10-08: no stopSelf() when all attempts fail. START_STICKY only restarts a
         // *killed* process, not a service that stopped itself, so that left the TV offline
         // until the next reboot. The service stays up and the watchdog retries the bind.
-        mWebServer = WebServer(SERVER_PORT, this)
+        // 1.1.0: the *HTTP server on the network* switch (settings screen) binds loopback
+        // only when off; the app's own screens keep reading /state over 127.0.0.1.
+        mHttpLan = httpLanEnabled()
+        mWebServer = WebServer(httpHostname(), SERVER_PORT, this)
         if (!startWebServer()) {
             Log.e(LOG_TAG, "Port $SERVER_PORT not bound yet; the watchdog retries every ${WATCHDOG_INTERVAL_MS / 1000} s")
         }
@@ -148,7 +153,7 @@ class PiPupService : Service(), WebServer.Handler {
         // 0.32.0-beta.4 (ha-pipup #60): read the decoder list now, off the main thread, so
         // no video popup has to wait for it there
         DecoderChoice.prime()
-        registerNsd()
+        if (mHttpLan) registerNsd()
         startWatchdog()
         startUpdateChecker()
         registerReceiver(mScreenReceiver, android.content.IntentFilter().apply {
@@ -277,6 +282,8 @@ class PiPupService : Service(), WebServer.Handler {
         runCatching { MediaSessions.onChange = null }
         runCatching { ForegroundApp.onChange = null; ForegroundApp.stop() }
         runCatching { SoundPlayer.stop(this) }
+        // 1.1.0: says `offline` on the availability topic and lets go of the broker
+        runCatching { Mqtt.stop() }
         super.onDestroy()
 
         mWatchdogHandler.removeCallbacksAndMessages(null)
@@ -300,18 +307,7 @@ class PiPupService : Service(), WebServer.Handler {
     /// None of the keys here are sensitive (device id, version markers). Existing
     /// installs kept them in the default credential-protected file; move it once so
     /// the device id — and therefore the Home Assistant unique_id — stays stable.
-    private fun prefs(): android.content.SharedPreferences {
-        val ctx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
-            applicationContext.createDeviceProtectedStorageContext() else applicationContext
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-            !ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).contains(PREF_DEVICE_ID)) {
-            // one-time migration from the old location; a no-op once moved, and safe
-            // to skip while credential storage is still locked (the id is regenerated
-            // only if neither file has it, which cannot happen for an existing install)
-            runCatching { ctx.moveSharedPreferencesFrom(applicationContext, PREFS_NAME) }
-        }
-        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    }
+    private fun prefs(): android.content.SharedPreferences = prefs(applicationContext)
 
     /// stable device identifier: generated once, survives app updates (not reinstalls)
     private fun deviceId(): String {
@@ -368,9 +364,20 @@ class PiPupService : Service(), WebServer.Handler {
 
     /// POST the pressed button to the callback URL (HA webhook), off the main thread
     private fun sendButtonCallback(popup: PopupProps, button: PopupProps.Button) {
+        // 1.1.0: every press also goes to `<root>/button` on the broker, callback or not,
+        // so a popup sent over MQTT can be answered over MQTT
+        runCatching {
+            Mqtt.publishButton(Json.writeValueAsString(mapOf(
+                "popup" to popup.id,
+                "button" to button.id,
+                "label" to button.label,
+                "device" to deviceId(),
+                "name" to deviceName()
+            )))
+        }
         val url = popup.callback
         if (url.isNullOrBlank()) {
-            Log.w(LOG_TAG, "Button ${button.id} pressed but no callback configured")
+            if (!Mqtt.wantsEvents) Log.w(LOG_TAG, "Button ${button.id} pressed but no callback configured")
             return
         }
         Thread {
@@ -460,6 +467,12 @@ class PiPupService : Service(), WebServer.Handler {
         // does not run for an already-running service, so doing this only there
         // made each extra start request crash the process.
         enterForeground()
+
+        // 1.1.0: the settings screen saved; pick up the HTTP switch and the MQTT config
+        if (intent?.action == ACTION_RELOAD_SETTINGS) {
+            applySettings()
+            return START_STICKY
+        }
 
         // A restart after a kill (START_STICKY, or the boot/connectivity Receiver)
         // arrives here with the web server gone; bring it back rather than sitting
@@ -583,6 +596,8 @@ class PiPupService : Service(), WebServer.Handler {
                 runCatching { checkPermissionsChanged() }
                 // 0.32.0: picks up a media session grant given after the start
                 runCatching { MediaSessions.start(this@PiPupService) }
+                // 1.1.0: a broker that was down when we started, or Wi-Fi that came up later
+                runCatching { Mqtt.ensureConnected() }
                 mWatchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
             }
         }, WATCHDOG_INTERVAL_MS)
@@ -629,13 +644,43 @@ class PiPupService : Service(), WebServer.Handler {
         System.currentTimeMillis()
     )
 
-    /// Push target and update source from prefs into the objects that use them.
+    /// Push target, update source and (1.1.0) the MQTT config from prefs into the objects
+    /// that use them.
     private fun loadSettings() {
         val p = prefs()
         Pusher.url = p.getString(PREF_WEBHOOK, null)
         UpdateManager.source = p.getString(PREF_UPDATE_SOURCE, null)
             ?.takeIf { UpdateManager.isValidSource(it) } ?: UpdateManager.DEFAULT_SOURCE
+        // a fresh connect publishes the state at once, so a retained `state` is there before
+        // the first change; built off the Paho thread, like every emit()
+        Mqtt.onConnected = { emit("connected") }
+        Mqtt.apply(mqttConfig(p, deviceId()), this)
     }
+
+    /// 1.1.0: the settings screen saved (ACTION_RELOAD_SETTINGS). The HTTP switch needs a
+    /// new server instance (NanoHTTPD binds in its constructor's hostname); MQTT reconnects
+    /// only when its config actually changed (Mqtt.apply compares).
+    private fun applySettings() {
+        val lan = httpLanEnabled()
+        if (lan != mHttpLan) {
+            mHttpLan = lan
+            Log.i(LOG_TAG, "HTTP on the network: ${if (lan) "on" else "off (loopback only)"}")
+            runCatching { mWebServer.stop() }
+            mWebServer = WebServer(httpHostname(), SERVER_PORT, this)
+            if (!startWebServer()) {
+                Log.e(LOG_TAG, "Port $SERVER_PORT not bound yet; the watchdog retries every ${WATCHDOG_INTERVAL_MS / 1000} s")
+            }
+            unregisterNsd()
+            if (lan) registerNsd()
+        }
+        loadSettings()
+        emit("settings")
+    }
+
+    private fun httpLanEnabled(): Boolean = prefs().getBoolean(PREF_HTTP_LAN, true)
+
+    /// null = every interface; loopback only when the network switch is off (1.1.0)
+    private fun httpHostname(): String? = if (mHttpLan) null else "127.0.0.1"
 
     /// GET/POST /settings: persistent device settings, POSTed as query parameters,
     /// e.g. `POST /settings?updateChecks=false`; both methods answer the current values.
@@ -1240,13 +1285,16 @@ class PiPupService : Service(), WebServer.Handler {
     /// Push one event (0.24.0): the /state JSON plus `event` and [extra]. Built here,
     /// on the caller's thread, so the body is the state at the moment of the event.
     private fun emit(event: String, extra: Map<String, Any?> = emptyMap()) {
-        if (Pusher.url.isNullOrBlank()) return
+        // 1.1.0: the same body also goes to the broker (retained `state`, plus `event`)
+        if (Pusher.url.isNullOrBlank() && !Mqtt.wantsEvents) return
         try {
             val body = buildState().apply {
                 put("event", event)
                 putAll(extra)
             }
-            Pusher.push(event, Json.writeValueAsString(body))
+            val json = Json.writeValueAsString(body)
+            Pusher.push(event, json)
+            Mqtt.publishState(event, json)
         } catch (ex: Throwable) {
             Log.e(LOG_TAG, "push $event: building state failed: ${ex.message}")
         }
@@ -1279,7 +1327,10 @@ class PiPupService : Service(), WebServer.Handler {
                 "model" to Build.MODEL,
                 "manufacturer" to Build.MANUFACTURER,
                 "android" to Build.VERSION.RELEASE
-            )
+            ),
+            // 1.1.0: the two transports, as the settings screen on the TV has them
+            "http" to mapOf("lan" to mHttpLan, "port" to SERVER_PORT),
+            "mqtt" to Mqtt.status()
         )
         val now = SystemClock.elapsedRealtime()
         // the popup on top of the stack: what a caller from before 0.24.0 knows as "the" popup
@@ -1983,6 +2034,54 @@ class PiPupService : Service(), WebServer.Handler {
         /// MainActivity intent action: launch the pending install confirmation (0.26.1).
         const val ACTION_CONFIRM_INSTALL = "nl.rogro82.pipup.action.CONFIRM_INSTALL"
         const val PREF_LAST_RUN_VERSION = "last_run_version"
+        /// 1.1.0: the settings screen. HTTP on the LAN (false = loopback only) and MQTT.
+        const val PREF_HTTP_LAN = "http_lan"
+        const val PREF_MQTT_ENABLED = "mqtt_enabled"
+        const val PREF_MQTT_HOST = "mqtt_host"
+        const val PREF_MQTT_PORT = "mqtt_port"
+        const val PREF_MQTT_TLS = "mqtt_tls"
+        const val PREF_MQTT_USERNAME = "mqtt_username"
+        const val PREF_MQTT_PASSWORD = "mqtt_password"
+        const val PREF_MQTT_PREFIX = "mqtt_prefix"
+        /// this TV's topic segment; empty = the device id
+        const val PREF_MQTT_NAME = "mqtt_name"
+        /// Service intent action from the settings screen: re-read prefs (1.1.0)
+        const val ACTION_RELOAD_SETTINGS = "nl.rogro82.pipup.action.RELOAD_SETTINGS"
+
+        /// App preferences, kept in *device-protected* storage. The service can start
+        /// during direct boot (LOCKED_BOOT_COMPLETED, before first unlock) on a TV whose
+        /// mains power was restored, and credential-protected prefs are unreadable then.
+        /// Existing installs kept them in the default credential-protected file; move it
+        /// once so the device id — and therefore the Home Assistant unique_id — stays stable.
+        /// Since 1.1.0 the MQTT password lives here too: the file is still private to the
+        /// app (MODE_PRIVATE); "device-protected" only means readable before first unlock,
+        /// and a TV has no lock screen to speak of.
+        fun prefs(context: Context): android.content.SharedPreferences {
+            val app = context.applicationContext
+            val ctx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+                app.createDeviceProtectedStorageContext() else app
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+                !ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).contains(PREF_DEVICE_ID)) {
+                // one-time migration from the old location; a no-op once moved, and safe
+                // to skip while credential storage is still locked (the id is regenerated
+                // only if neither file has it, which cannot happen for an existing install)
+                runCatching { ctx.moveSharedPreferencesFrom(app, PREFS_NAME) }
+            }
+            return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
+
+        /// The MQTT config as saved by the settings screen (1.1.0). `name` falls back to
+        /// the device id, which the caller passes because reading it may create it.
+        fun mqttConfig(p: android.content.SharedPreferences, deviceId: String): MqttConfig = MqttConfig(
+            enabled = p.getBoolean(PREF_MQTT_ENABLED, false),
+            host = p.getString(PREF_MQTT_HOST, null)?.trim() ?: "",
+            port = p.getInt(PREF_MQTT_PORT, MqttConfig.DEFAULT_MQTT_PORT),
+            tls = p.getBoolean(PREF_MQTT_TLS, false),
+            username = p.getString(PREF_MQTT_USERNAME, null) ?: "",
+            password = p.getString(PREF_MQTT_PASSWORD, null) ?: "",
+            prefix = p.getString(PREF_MQTT_PREFIX, null)?.trim()?.ifEmpty { null } ?: MqttConfig.DEFAULT_MQTT_PREFIX,
+            name = p.getString(PREF_MQTT_NAME, null)?.trim()?.ifEmpty { null } ?: deviceId
+        )
         // First check shortly after boot (network is usually up by then), then twice a day.
         // GitHub's anonymous API allows 60 requests/hour per IP; this is nowhere near it.
         const val UPDATE_CHECK_FIRST_DELAY_MS = 120_000L
