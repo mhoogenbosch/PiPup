@@ -8,6 +8,11 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+### Fixed
+- **The countdown bar follows the popup's duration on every TV.** It was an Android animation, and
+  Android scales those with the TV's *Animator duration scale* (developer options): at 0.5x the bar of a
+  20-second popup was empty after 10 seconds, and with animations off at once. It now runs on the clock
+  (#89, @DragonFlye).
 
 ## [v0.33.0-beta.1] — 2026-11-14 (test release for #88 and #89: the app in front, a picture of the screen)
 A **prerelease**, on top of 0.32.0-beta.5. Asked for by @Ltek (#83) and @DragonFlye (ha-pipup #61).

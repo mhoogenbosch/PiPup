@@ -1,6 +1,5 @@
 package nl.rogro82.pipup
 
-import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
@@ -8,11 +7,11 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.util.Log
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.LinearInterpolator
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -184,7 +183,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         mPoster = null
     }
 
-    private var mProgressAnimator: ObjectAnimator? = null
+    private var mProgressTicker: Runnable? = null
 
     open fun create() {
         inflate(context, R.layout.popup,this)
@@ -359,19 +358,26 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, 8).apply {
                 setMargins(0, 12, 0, 0)
             })
-            mProgressAnimator = ObjectAnimator.ofInt(bar, "progress", 1000, 0).apply {
-                duration = popup.duration * 1000L
-                interpolator = LinearInterpolator()
-                start()
+            // Driven by the clock, not by an animator: Android scales every animator with
+            // the TV's "Animator duration scale" (developer options), so at 0.5x the bar of
+            // a 20 s popup was empty after 10 s, and at 0 (animations off) at once (#89).
+            val total = popup.duration * 1000L
+            val startedAt = SystemClock.elapsedRealtime()
+            val ticker = object : Runnable {
+                override fun run() {
+                    if (mProgressTicker !== this) return  // destroyed
+                    val left = total - (SystemClock.elapsedRealtime() - startedAt)
+                    bar.progress = if (left <= 0 || total <= 0) 0 else (left * 1000 / total).toInt()
+                    if (left > 0) bar.postOnAnimation(this)
+                }
             }
+            mProgressTicker = ticker
+            bar.post(ticker)
         }
     }
 
     open fun destroy() {
-        try {
-            mProgressAnimator?.cancel()
-        } catch (_: Throwable) {}
-        mProgressAnimator = null
+        mProgressTicker = null  // the ticker stops itself on its next frame
     }
 
     /// Entrance animation (0.19.0). Runs once per *build*: an update-in-place reuses
