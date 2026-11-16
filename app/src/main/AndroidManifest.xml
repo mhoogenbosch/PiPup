@@ -42,6 +42,13 @@
         <intent>
             <action android:name="android.app.action.ADD_DEVICE_ADMIN"/>
         </intent>
+        <!-- 1.1.0: usage access and notification-listener access get Fix buttons too -->
+        <intent>
+            <action android:name="android.settings.USAGE_ACCESS_SETTINGS"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"/>
+        </intent>
         <!-- 0.29.0: GET /apps and POST /launch list and start the installed apps -->
         <intent>
             <action android:name="android.intent.action.MAIN"/>
