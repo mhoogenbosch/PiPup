@@ -49,11 +49,17 @@ class PiPupAccessibilityService : AccessibilityService() {
         /// Whether the user (or adb) enabled us in the accessibility settings. Read from
         /// settings rather than from `instance`, so a service that is enabled but not yet
         /// bound still reports as configured.
-        fun enabledInSettings(context: Context): Boolean = try {
+        fun enabledInSettings(context: Context): Boolean =
+            componentEnabled(context, PiPupAccessibilityService::class.java)
+
+        /// Whether the accessibility service [service] of this app is in the enabled list.
+        /// Matches the whole component (0.32.0): PiPup has two services since then, and the
+        /// control service being on must not read as this one being on.
+        fun componentEnabled(context: Context, service: Class<*>): Boolean = try {
             val enabled = Settings.Secure.getString(
                 context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             ) ?: ""
-            enabled.split(':').any { it.substringBefore('/') == context.packageName }
+            enabledListContains(enabled, context.packageName, service.name)
         } catch (ex: Throwable) {
             Log.e(LOG_TAG, "Cannot read accessibility settings: ${ex.message}")
             false
@@ -80,5 +86,15 @@ class PiPupAccessibilityService : AccessibilityService() {
                 false
             }
         }
+    }
+}
+
+/// Whether the `:`-separated enabled-services setting [enabled] holds [className] of
+/// [pkg], in the full (`pkg/pkg.Cls`) or short (`pkg/.Cls`) form.
+internal fun enabledListContains(enabled: String, pkg: String, className: String): Boolean {
+    val short = if (className.startsWith("$pkg.")) "." + className.removePrefix("$pkg.") else null
+    return enabled.split(':').any { entry ->
+        val parts = entry.trim().split('/', limit = 2)
+        parts.size == 2 && parts[0] == pkg && (parts[1] == className || parts[1] == short)
     }
 }

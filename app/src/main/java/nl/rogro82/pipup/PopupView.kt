@@ -1,6 +1,5 @@
 package nl.rogro82.pipup
 
-import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
@@ -8,11 +7,11 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.util.Log
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.LinearInterpolator
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -184,7 +183,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         mPoster = null
     }
 
-    private var mProgressAnimator: ObjectAnimator? = null
+    private var mProgressTicker: Runnable? = null
 
     open fun create() {
         inflate(context, R.layout.popup,this)
@@ -359,19 +358,26 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, 8).apply {
                 setMargins(0, 12, 0, 0)
             })
-            mProgressAnimator = ObjectAnimator.ofInt(bar, "progress", 1000, 0).apply {
-                duration = popup.duration * 1000L
-                interpolator = LinearInterpolator()
-                start()
+            // Driven by the clock, not by an animator: Android scales every animator with
+            // the TV's "Animator duration scale" (developer options), so at 0.5x the bar of
+            // a 20 s popup was empty after 10 s, and at 0 (animations off) at once (#89).
+            val total = popup.duration * 1000L
+            val startedAt = SystemClock.elapsedRealtime()
+            val ticker = object : Runnable {
+                override fun run() {
+                    if (mProgressTicker !== this) return  // destroyed
+                    val left = total - (SystemClock.elapsedRealtime() - startedAt)
+                    bar.progress = if (left <= 0 || total <= 0) 0 else (left * 1000 / total).toInt()
+                    if (left > 0) bar.postOnAnimation(this)
+                }
             }
+            mProgressTicker = ticker
+            bar.post(ticker)
         }
     }
 
     open fun destroy() {
-        try {
-            mProgressAnimator?.cancel()
-        } catch (_: Throwable) {}
-        mProgressAnimator = null
+        mProgressTicker = null  // the ticker stops itself on its next frame
     }
 
     /// Entrance animation (0.19.0). Runs once per *build*: an update-in-place reuses
@@ -522,7 +528,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             // 6.0.1, OMX.amlogic.avc.decoder.awesome; the TCL on Android 8 was fine). There
             // we prefer the software decoders (OMX.google.* / c2.android.*), which never
             // touch that layer. `softwareDecoder` in the payload overrides the automatic rule.
-            val software = media.softwareDecoder ?: autoSoftwareDecoder()
+            val software = media.softwareDecoder ?: DecoderChoice.autoSoftware()
             Log.i(LOG_TAG, "video decoder: ${if (software) "software (preferred)" else "hardware (default)"}" +
                 " [auto=${media.softwareDecoder == null}, sdk=${Build.VERSION.SDK_INT}]")
             val renderers = DefaultRenderersFactory(context)
@@ -595,19 +601,8 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
                 if (MimeTypes.isVideo(mimeType)) infos.sortedBy { if (it.softwareOnly) 0 else 1 } else infos
             }
-
-            /// Automatic rule: software on Android < 8 (old vendor decoders, the projector
-            /// class of devices) and wherever an Amlogic decoder is present, hardware elsewhere.
-            @UnstableApi
-            fun autoSoftwareDecoder(): Boolean {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
-                return try {
-                    MediaCodecUtil.getDecoderInfos(MimeTypes.VIDEO_H264, false, false)
-                        .any { it.name.contains("amlogic", ignoreCase = true) }
-                } catch (e: Throwable) {
-                    false
-                }
-            }
+            // The automatic rule (software on Android < 8 and with an Amlogic decoder) lives in
+            // DecoderChoice since 0.32.0-beta.4: decided once, off the main thread.
         }
     }
 

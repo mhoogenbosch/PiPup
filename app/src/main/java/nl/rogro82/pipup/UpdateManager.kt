@@ -597,19 +597,53 @@ object UpdateManager {
         receiverRegistered = true
     }
 
-    /// Semantic-version comparison ("0.10.0" is newer than "0.9.0"); non-numeric
-    /// suffixes are ignored, an unparsable version is never considered newer.
+    /// Semantic-version comparison: "0.10.0" is newer than "0.9.0", and since 0.32.0 a release
+    /// is newer than its own pre-releases ("0.32.0" > "0.32.0-beta.2" > "0.32.0-beta.1"; also
+    /// PEP 440 style "1.32.0b1" for ha-pipup). Before, the suffix was ignored or read as a
+    /// fourth number, so a tester on 0.32.0-beta.1 never got 0.32.0. Build metadata (`+…`)
+    /// is ignored; an unparsable candidate is never newer, an unparsable current is 0.0.0.
     fun isNewer(candidate: String, current: String): Boolean {
-        fun parts(v: String) = v.split('.', '-', '+').mapNotNull { it.toIntOrNull() }
-        val a = parts(candidate)
-        val b = parts(current)
-        if (a.isEmpty()) return false
-        for (i in 0 until maxOf(a.size, b.size)) {
-            val x = a.getOrElse(i) { 0 }
-            val y = b.getOrElse(i) { 0 }
-            if (x != y) return x > y
+        val a = parseVersion(candidate) ?: return false
+        val b = parseVersion(current) ?: ParsedVersion(emptyList(), emptyList())
+        return compareParsed(a, b) > 0
+    }
+
+    internal data class ParsedVersion(val core: List<Int>, val pre: List<String>)
+
+    private val VERSION = Regex("^[vV]?(\\d+(?:\\.\\d+)*)(.*)$")
+
+    /// "v0.32.0-beta.1+abc" -> core [0, 32, 0], pre [beta, 1]; null without a leading number.
+    internal fun parseVersion(v: String): ParsedVersion? {
+        val m = VERSION.matchEntire(v.trim().substringBefore('+')) ?: return null
+        val core = m.groupValues[1].split('.').map { it.toInt() }
+        val rest = m.groupValues[2].trimStart('-', '.', '_')
+        val pre = if (rest.isEmpty()) emptyList() else rest.split('.', '-')
+        return ParsedVersion(core, pre)
+    }
+
+    /// Numbers first (missing parts count as 0); with equal numbers a release beats any
+    /// pre-release, and pre-releases compare identifier by identifier (semver 11.4).
+    internal fun compareParsed(a: ParsedVersion, b: ParsedVersion): Int {
+        for (i in 0 until maxOf(a.core.size, b.core.size)) {
+            val x = a.core.getOrElse(i) { 0 }
+            val y = b.core.getOrElse(i) { 0 }
+            if (x != y) return x.compareTo(y)
         }
-        return false
+        if (a.pre.isEmpty() || b.pre.isEmpty()) return b.pre.size.coerceAtMost(1) - a.pre.size.coerceAtMost(1)
+        for (i in 0 until minOf(a.pre.size, b.pre.size)) {
+            val x = a.pre[i]
+            val y = b.pre[i]
+            val xn = x.toIntOrNull()
+            val yn = y.toIntOrNull()
+            val c = when {
+                xn != null && yn != null -> xn.compareTo(yn)
+                xn != null -> -1 // numeric identifiers rank below alphanumeric ones
+                yn != null -> 1
+                else -> x.compareTo(y)
+            }
+            if (c != 0) return c
+        }
+        return a.pre.size.compareTo(b.pre.size)
     }
 
     /// Strip the PEM armour and whitespace and decode the base64 body to DER. The decoder is

@@ -114,6 +114,8 @@ object Permissions {
         "autoStart" to autoStart(context),
         "deviceAdmin" to granted(context, KEY_ADMIN),
         "accessibility" to PiPupAccessibilityService.enabledInSettings(context),
+        // 0.33.0 (#88): usage access, for `foreground` in /state; adb only, optional
+        "usage" to ForegroundApp.granted(context),
         "complete" to complete(context),
         // which of these the app can hand to the user on screen (see fixIntent)
         "fixable" to mapOf(

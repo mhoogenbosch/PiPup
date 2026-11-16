@@ -28,6 +28,9 @@ object PowerController {
 
     /// self-releasing: a leaked wake lock would keep the TV awake forever
     private const val WAKE_LOCK_TIMEOUT_MS = 3_000L
+    /// how long waitForScreen waits by default: a panel (and HDMI-CEC) takes a moment
+    const val SCREEN_WAIT_MS = 3_000L
+    private const val SCREEN_POLL_MS = 100L
 
     fun screenOn(context: Context): Boolean =
         (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
@@ -99,6 +102,19 @@ object PowerController {
         }
 
         return ok
+    }
+
+    /// 0.32.0-beta.3 (#83): wait up to [timeoutMs] for the screen to reach [on]; true when it
+    /// did. wake() only says the attempt was made: on a TCL (Android 11) the wake activity
+    /// started but the screen stayed off, and callers were told "woke". Blocking: call it
+    /// from a worker thread (the web server's), never the main thread.
+    fun waitForScreen(context: Context, on: Boolean, timeoutMs: Long = SCREEN_WAIT_MS): Boolean {
+        val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            if (screenOn(context) == on) return true
+            if (android.os.SystemClock.elapsedRealtime() >= deadline) return false
+            try { Thread.sleep(SCREEN_POLL_MS) } catch (_: InterruptedException) { return false }
+        }
     }
 
     /// Turn the screen off (standby). Returns false when no route is granted, or when the
