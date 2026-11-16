@@ -37,11 +37,11 @@ param(
     # in the background; needed on TCL Google TVs, elsewhere it only switches the TV on
     [switch]$Wake,
 
-    # app >= 0.32.0: give access to the active media sessions (GET /media, POST /media/seek);
+    # app >= 1.0.0: give access to the active media sessions (GET /media, POST /media/seek);
     # Android ignores it on low-RAM devices
     [switch]$Media,
 
-    # app >= 0.32.0: let PiPup press buttons in these apps (comma-separated, e.g.
+    # app >= 1.0.0: let PiPup press buttons in these apps (comma-separated, e.g.
     # com.plexapp.android): enables the separate "PiPup control" accessibility service
     [string]$Click,
 
@@ -49,11 +49,11 @@ param(
     # screenshot, unless -Screen is given too)
     [switch]$NoClick,
 
-    # app >= 0.33.0: give usage access, so /state says which app is in front, also when
+    # app >= 1.0.0: give usage access, so /state says which app is in front, also when
     # nothing plays. Package names only
     [switch]$Apps,
 
-    # app >= 0.33.0, Android 11+: switch GET /screen.jpg on, a picture of the screen for a
+    # app >= 1.0.0, Android 11+: switch GET /screen.jpg on, a picture of the screen for a
     # request that carries the token. Enables the "PiPup control" service and sets a new
     # random token, which is printed once. Off by default
     [switch]$Screen,
@@ -97,7 +97,7 @@ if ($ScreenToken -and $ScreenToken -notmatch '^[A-Za-z0-9_-]{16,128}$') {
 }
 
 # Whether the ':'-separated list holds the component, in the full (pkg/pkg.Cls) or short
-# (pkg/.Cls) form. The whole component: since 0.32.0 PiPup has two accessibility
+# (pkg/.Cls) form. The whole component: since 1.0.0 PiPup has two accessibility
 # services, and one being on must not read as the other being on.
 function Test-Component {
     param([string]$List, [string]$Component)
@@ -106,7 +106,7 @@ function Test-Component {
 }
 
 # The entries of a ':'-separated list, without empty and "null" ones: `settings get` prints
-# null when the setting is unset, and a hand-written append (readme before 0.32.0) kept it.
+# null when the setting is unset, and a hand-written append (readme before 1.0.0) kept it.
 function Get-Components {
     param([string]$List)
     return @(@($List -split ':') | Where-Object { $_ -and $_ -ne 'null' })
@@ -257,7 +257,7 @@ foreach ($device in $Devices) {
         Enable-Accessibility $target $AccessibilityComponent 'accessibility fallback'
     }
 
-    # 0.32.0 (#83): media sessions. Android lists them for an app whose notification
+    # 1.0.0 (#83): media sessions. Android lists them for an app whose notification
     # listener is enabled; PiPup's listener reads no notifications.
     if ($Media) {
         $sdk = 0
@@ -280,22 +280,22 @@ foreach ($device in $Devices) {
         }
     }
 
-    # 0.33.0 (#88): usage access, for `foreground` in /state. A TV has no screen for it.
+    # 1.0.0 (#88): usage access, for `foreground` in /state. A TV has no screen for it.
     if ($Apps) {
         adb -s $target shell "appops set $Package GET_USAGE_STATS allow" | Out-Null
         Write-Host '  - usage access requested (verifying below)'
     }
 
-    # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
+    # 1.0.0 (#83): the separate "PiPup control" service and the apps it may press in.
     # The list can only be set like this (adb), never over the LAN.
-    # 0.33.0 (#89): the same service takes the picture for GET /screen.jpg.
+    # 1.0.0 (#89): the same service takes the picture for GET /screen.jpg.
     $clickList = $null
     if ($Click -or $Screen) {
         $current = ((adb -s $target shell 'settings get secure enabled_accessibility_services' 2>$null) -join '').Trim()
         if (Test-Component $current $ControlComponent) {
-            # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
+            # Switch it off and on again. After an app update Android keeps binding an
             # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
-            # The same goes for the screenshot capability of 0.33.0.
+            # The same goes for the screenshot capability.
             Disable-Accessibility $target $ControlComponent 'control service, restarting:'
             Start-Sleep -Seconds 2
         }
@@ -311,11 +311,11 @@ foreach ($device in $Devices) {
             $allowed = if ($result -match 'data="([^"]*)"') { $Matches[1] } else { '' }
             Write-Ok "click allowed in: $(if ($allowed) { $allowed } else { 'no app' })"
         } else {
-            Write-Fail "could not set the click list (app older than 0.32.0?): $result"
+            Write-Fail "could not set the click list (app older than 1.0.0?): $result"
         }
     }
 
-    # 0.33.0 (#89): the token that switches GET /screen.jpg on; empty switches it off.
+    # 1.0.0 (#89): the token that switches GET /screen.jpg on; empty switches it off.
     # Like the click list it can only be set like this (adb), never over the LAN.
     if ($Screen -or $NoScreen) {
         $token = ''
@@ -342,7 +342,7 @@ foreach ($device in $Devices) {
         } elseif ($result -match 'data="off"') {
             Write-Ok 'screenshot off'
         } else {
-            Write-Fail "could not set the screenshot token (app older than 0.33.0?): $result"
+            Write-Fail "could not set the screenshot token (app older than 1.0.0?): $result"
         }
     }
 
@@ -385,7 +385,7 @@ foreach ($device in $Devices) {
             if ($state.permissions.usage) {
                 Write-Ok 'app in front readable (foreground in /state)'
             } else {
-                Write-Warn 'usage access NOT granted (app older than 0.33.0, or this Android refuses it)'
+                Write-Warn 'usage access NOT granted (app older than 1.0.0, or this Android refuses it)'
             }
         }
         if ($Screen) {
