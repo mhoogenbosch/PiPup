@@ -8,6 +8,13 @@ Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup
 full story (English and Dutch) and the APK.
 
 ## [Unreleased]
+
+## [v1.0.0-beta.1] — 2026-11-15 (test release: last beta before 1.0.0)
+A **prerelease**, on top of 0.33.0-beta.1. The next release is **1.0.0**: everything from the 0.32.0 and
+0.33.0 betas (what is playing, seek, click, the app in front, a picture of the screen) in one release.
+With these PiPup covers almost everything the ADB integration did, so it gets a new major number. Nothing
+changes in how you use it: there is no 0.32.0 or 0.33.0 release, and where this changelog or the readme
+says "app ≥ 0.32.0" or "≥ 0.33.0", 1.0.0 has it.
 ### Fixed
 - **The countdown bar follows the popup's duration on every TV.** It was an Android animation, and
   Android scales those with the TV's *Animator duration scale* (developer options): at 0.5x the bar of a
@@ -929,6 +936,8 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v1.0.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0-beta.1
+[v0.33.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.33.0-beta.1
 [v0.32.0-beta.5]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.5
 [v0.32.0-beta.4]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.4
 [v0.32.0-beta.3]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.3
