@@ -51,18 +51,18 @@ Options:
                       accessibility service is what keeps the process alive there
                       (oom_score_adj 100, out of the vendor guard's reach)
   --no-accessibility  do not enable it, not even on TCL
-  --media             give access to the active media sessions (app >= 0.32.0):
+  --media             give access to the active media sessions (app >= 1.0.0):
                       GET /media shows what plays in any app, POST /media/seek
                       jumps to a time. Ignored by Android on low-RAM devices
   --click <packages>  let PiPup press buttons in these apps (comma-separated, e.g.
-                      com.plexapp.android; app >= 0.32.0): enables the separate
+                      com.plexapp.android; app >= 1.0.0): enables the separate
                       "PiPup control" accessibility service and sets the list.
                       Other apps stay refused
   --no-click          switch the control service off and clear that list (that
                       also stops the screenshot, unless --screen is given too)
-  --apps              give usage access (app >= 0.33.0): /state then says which app
+  --apps              give usage access (app >= 1.0.0): /state then says which app
                       is in front, also when nothing plays. Package names only
-  --screen            switch GET /screen.jpg on (app >= 0.33.0, Android 11+): a
+  --screen            switch GET /screen.jpg on (app >= 1.0.0, Android 11+): a
                       picture of the screen for a request that carries the token.
                       Enables the "PiPup control" service and sets a new random
                       token, which is printed once. Off by default
@@ -129,7 +129,7 @@ if [ -n "$SCREEN_TOKEN" ]; then
 fi
 
 # Whether the ':'-separated list $1 holds component $2, in the full (pkg/pkg.Cls) or the
-# short (pkg/.Cls) form. Matches the whole component: since 0.32.0 PiPup has two
+# short (pkg/.Cls) form. Matches the whole component: since 1.0.0 PiPup has two
 # accessibility services, and one being on must not read as the other being on.
 has_component() {
     local short="${2/\/$PACKAGE./\/.}"
@@ -140,7 +140,7 @@ has_component() {
 }
 
 # A component list without empty and "null" entries. `settings get` prints null when the
-# setting is unset, and a hand-written append (readme before 0.32.0) kept it: null:pkg/...
+# setting is unset, and a hand-written append (readme before 1.0.0) kept it: null:pkg/...
 clean_components() {
     printf '%s' "$1" | tr ':' '\n' | grep -vx -e '' -e 'null' | paste -sd: -
 }
@@ -287,7 +287,7 @@ for device in "${DEVICES[@]}"; do
         enable_accessibility "$target" "$ACCESSIBILITY_COMPONENT" "accessibility fallback"
     fi
 
-    # 0.32.0 (#83): media sessions. Android lists them for an app whose notification
+    # 1.0.0 (#83): media sessions. Android lists them for an app whose notification
     # listener is enabled; PiPup's listener reads no notifications.
     if [ "$GRANT_MEDIA" -eq 1 ]; then
         sdk=$(adb -s "$target" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')
@@ -312,21 +312,21 @@ for device in "${DEVICES[@]}"; do
         fi
     fi
 
-    # 0.33.0 (#88): usage access, for `foreground` in /state. A TV has no screen for it.
+    # 1.0.0 (#88): usage access, for `foreground` in /state. A TV has no screen for it.
     if [ "$GRANT_APPS" -eq 1 ]; then
         adb -s "$target" shell "appops set $PACKAGE GET_USAGE_STATS allow" >/dev/null 2>&1 \
             && log "  · usage access requested (verifying below)" || warn "could not grant GET_USAGE_STATS"
     fi
 
-    # 0.32.0 (#83): the separate "PiPup control" service and the apps it may press in.
+    # 1.0.0 (#83): the separate "PiPup control" service and the apps it may press in.
     # The list can only be set like this (adb), never over the LAN.
-    # 0.33.0 (#89): the same service takes the picture for GET /screen.jpg.
+    # 1.0.0 (#89): the same service takes the picture for GET /screen.jpg.
     if [ "$CLICK_SET" -eq 1 ] || [ "$SCREEN" -eq 1 ]; then
         current=$(adb -s "$target" shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r')
         if has_component "$current" "$CONTROL_COMPONENT"; then
-            # 0.32.0-beta.2: off and on again. After an app update Android keeps binding an
+            # Switch it off and on again. After an app update Android keeps binding an
             # enabled service with the old version's capabilities: beta.1 -> beta.2 had no tap.
-            # The same goes for the screenshot capability of 0.33.0.
+            # The same goes for the screenshot capability.
             disable_accessibility "$target" "$CONTROL_COMPONENT" "control service, restarting:"
             sleep 2
         fi
@@ -341,11 +341,11 @@ for device in "${DEVICES[@]}"; do
             allowed=$(printf '%s' "$result" | grep -o 'data="[^"]*"' | cut -d'"' -f2)
             ok "click allowed in: ${allowed:-no app}"
         else
-            err "could not set the click list (app older than 0.32.0?): $(printf '%s' "$result" | tr '\n' ' ')"
+            err "could not set the click list (app older than 1.0.0?): $(printf '%s' "$result" | tr '\n' ' ')"
         fi
     fi
 
-    # 0.33.0 (#89): the token that switches GET /screen.jpg on; empty switches it off.
+    # 1.0.0 (#89): the token that switches GET /screen.jpg on; empty switches it off.
     # Like the click list it can only be set like this (adb), never over the LAN.
     if [ "$SCREEN" -eq 1 ] || [ "$NO_SCREEN" -eq 1 ]; then
         token=""
@@ -364,7 +364,7 @@ for device in "${DEVICES[@]}"; do
                     log "    curl -H 'X-PiPup-Token: $token' -o screen.jpg http://$host:$PORT/screen.jpg"
                 fi ;;
             *'data="off"'*) ok "screenshot off" ;;
-            *) err "could not set the screenshot token (app older than 0.33.0?): $(printf '%s' "$result" | tr '\n' ' ')" ;;
+            *) err "could not set the screenshot token (app older than 1.0.0?): $(printf '%s' "$result" | tr '\n' ' ')" ;;
         esac
     fi
 
@@ -411,7 +411,7 @@ for device in "${DEVICES[@]}"; do
             if printf '%s' "$state" | grep -q '"usage":true'; then
                 ok "app in front readable (foreground in /state)"
             else
-                warn "usage access NOT granted (app older than 0.33.0, or this Android refuses it)"
+                warn "usage access NOT granted (app older than 1.0.0, or this Android refuses it)"
             fi
         fi
 

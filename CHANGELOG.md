@@ -7,7 +7,57 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
-## [Unreleased]
+## [Unreleased — v1.0.0]
+Everything from the 0.32.0 and 0.33.0 test releases (#83, #88, #89), in one release. There is no 0.32.0
+or 0.33.0 release. With these PiPup covers almost everything the Android TV (ADB) integration of Home
+Assistant offers, so it gets a new major number. **Nothing breaks:** everything new is off until you grant
+it over adb, and popups, TV control and updates work as in 0.31.0. Use it with
+[ha-pipup 2.0.0](https://github.com/mhoogenbosch/ha-pipup). Asked for and tested by @Ltek and @DragonFlye.
+### Added
+- **What plays, in any app** (#83): `GET /media` gives app, title, artist, album, state, position,
+  duration, the `actions` the app accepts and an `artKey`, from the active media session (Netflix,
+  YouTube, Plex, Spotify, Jellyfin, …). The same is in `/state.media`, and a change or a seek is pushed
+  at once as event `media`. `GET /media/art` returns the artwork (JPEG, PNG with transparency, at most
+  600 px). Grant: `install.sh --media`. Only sessions an app marks active are seen (SmartTube's is not).
+- **Seeking**: `POST /media/seek` with `ms=` (absolute) or `by=` (± ms); 409 when the app does not allow it.
+- **Pressing a button in an app** (#83): `POST /click`, or `/launch?click=&wait=` to open a page and press
+  its button in one call (Play on a Plex title page). `method=click` (accessibility click, the default),
+  `tap` (a touch, only on devices with touch input) or `ok` (focus the view and press OK, as the remote
+  does). `wait` up to 30 s; the answer says whether the view `changed`. It runs in a separate service,
+  "PiPup control", off by default, and only in apps on a list that is set over adb only
+  (`install.sh --click <apps>`).
+- **The app in front** (#88): `/state.foreground` (`package`, `label`, `since`), also when nothing plays
+  (the launcher, a menu); pushed as event `foreground`. Grant: `install.sh --apps` (usage access).
+- **A picture of the screen** (#89): `GET /screen.jpg?width=160-1920`, on Android 11 and up. Off until a
+  token is set over adb (`install.sh --screen`), and it answers only a request with that token.
+  Protected video comes out black.
+- **`posterMode`** on `video`, `web` and `whep` (#87, @rshadow): `fit`, `fill`, `stretch` or `center`
+  scale the poster inside the requested area instead of resizing that area.
+### Changed
+- **Play and pause go into the app's media session** when PiPup has session access: `POST /key` calls the
+  session's transport controls, which Plex and others obey where they ignore a media key. Without access
+  the media key is sent as before. The answer's `via` says which.
+- **Waking is checked**: `/launch` (`woke`, `screenOn`) and `/power` (`reached`, `screenOn`) wait up to 3 s
+  and say whether the screen really came on or went off.
+### Fixed
+- **The countdown bar follows the popup's duration on every TV.** It was an Android animation, which the
+  TV's *Animator duration scale* shortened; it now runs on the clock (#89, @DragonFlye).
+- **The automatic video decoder choice no longer runs on the main thread** (ha-pipup #60): the codec list
+  is read once, in the background, when the service starts.
+- **A release is newer than its own test releases** in the updater (`1.0.0` > `1.0.0-beta.1`), so a tester
+  gets the release.
+- **`/state.permissions.accessibility` matches the whole service**, not only the package, now that PiPup
+  has two accessibility services; the installers check the same way and drop a `null:` entry the readme's
+  old snippet left in the list.
+### Docs
+- WHEP on a LAN-only setup: leaving out go2rtc's STUN servers (`webrtc: ice_servers: []`) took the first
+  frame from about 5.8 s to 1.7 s (#86, @ckegel72).
+### Upgrading
+- From 0.31.0: nothing to do. To use the new parts, grant them once: `install.sh --media --click <apps>
+  --apps --screen <tv-ip>` (or `install.ps1`), or switch them on in ha-pipup 2.0.0 under *Advanced install*.
+- From a 0.32/0.33 test release with the control service on: run `install.sh --click <apps>` or
+  `--screen` once more (ha-pipup does it when you save). After an update Android keeps the service's old
+  capabilities until it is switched off and on.
 
 ## [v1.0.0-beta.1] — 2026-11-15 (test release: last beta before 1.0.0)
 A **prerelease**, on top of 0.33.0-beta.1. The next release is **1.0.0**: everything from the 0.32.0 and
