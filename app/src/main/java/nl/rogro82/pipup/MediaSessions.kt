@@ -130,7 +130,14 @@ object MediaSessions {
             album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM),
             canSeek = ((state?.actions ?: 0L) and PlaybackState.ACTION_SEEK_TO) != 0L,
             actions = actionNames(state?.actions ?: 0L),
-            artKey = meta?.let { artKey(controller.packageName, it) }
+            artKey = meta?.let { artKey(controller.packageName, it) },
+            // 1.1.0 (#95): as the app gives them, for series / season / episode. Android has no
+            // fields for those; apps use the subtitle, the album artist or disc and track numbers.
+            subtitle = meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)?.takeIf { it.isNotBlank() },
+            description = meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION)?.takeIf { it.isNotBlank() },
+            albumArtist = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)?.takeIf { it.isNotBlank() },
+            discNumber = meta?.getLong(MediaMetadata.METADATA_KEY_DISC_NUMBER)?.takeIf { it > 0 },
+            trackNumber = meta?.getLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER)?.takeIf { it > 0 }
         )
     }
 
@@ -438,7 +445,12 @@ object MediaSessions {
         val album: String?,
         val canSeek: Boolean,
         val actions: List<String> = emptyList(),
-        val artKey: String? = null
+        val artKey: String? = null,
+        val subtitle: String? = null,
+        val description: String? = null,
+        val albumArtist: String? = null,
+        val discNumber: Long? = null,
+        val trackNumber: Long? = null
     ) {
         fun toMap(): Map<String, Any?> = linkedMapOf(
             "package" to pkg,
@@ -454,7 +466,13 @@ object MediaSessions {
             // 0.32.0-beta.4: what the app says it accepts (diagnostics; /key uses the
             // transport controls either way), and which artwork /media/art hands out
             "actions" to actions,
-            "artKey" to artKey
+            "artKey" to artKey,
+            // 1.1.0 (#95)
+            "subtitle" to subtitle,
+            "description" to description,
+            "albumArtist" to albumArtist,
+            "discNumber" to discNumber,
+            "trackNumber" to trackNumber
         )
 
         companion object {
@@ -469,7 +487,10 @@ object MediaSessions {
         if (before.pkg != now.pkg || before.state != now.state || before.title != now.title ||
             before.artist != now.artist || before.album != now.album ||
             before.durationMs != now.durationMs || before.canSeek != now.canSeek ||
-            before.actions != now.actions || before.artKey != now.artKey) return true
+            before.actions != now.actions || before.artKey != now.artKey ||
+            before.subtitle != now.subtitle || before.description != now.description ||
+            before.albumArtist != now.albumArtist || before.discNumber != now.discNumber ||
+            before.trackNumber != now.trackNumber) return true
         val was = before.positionMs ?: return now.positionMs != null
         val pos = now.positionMs ?: return true
         val expected = if (before.state == "playing")

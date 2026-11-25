@@ -6,6 +6,17 @@ import org.junit.Test
 class TvControlTest {
 
     @Test
+    fun keyNamesAreUnique() {
+        // 1.1.0 (#95): one name, one meaning, over all kinds of keys
+        val all = TvControl.MEDIA_KEYS.keys.toList() + TvControl.GLOBAL_KEYS.keys + TvControl.DPAD_KEYS.keys +
+            TvControl.KEY_WAKEUP + TvControl.KEY_CLOSE_DIALOGS
+        assertEquals(all.size, all.toSet().size)
+        assertEquals(listOf("up", "down", "left", "right", "ok"), TvControl.DPAD_KEYS.keys.toList())
+        // the five global actions of Android 13 are different ones
+        assertEquals(5, TvControl.DPAD_KEYS.values.toSet().size)
+    }
+
+    @Test
     fun stepToPercentRoundsAndClamps() {
         assertEquals(0, stepToPercent(0, 15))
         assertEquals(47, stepToPercent(7, 15))
