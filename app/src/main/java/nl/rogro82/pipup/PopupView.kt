@@ -487,7 +487,9 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         private var mDestroyed = false
         private var mFirstFrameSeen = false
         private var mUsingSoftware = false
+        private var mUsingMuted = media.muted
         private var mSoftwareFallbackUsed = false
+        private var mMutedFallbackUsed = false
         private var mStallTimeout: Runnable? = null
         private var mStallDeadlineMs: Long = Long.MAX_VALUE
         private var mCurrentWidth: Int = media.width
@@ -541,7 +543,21 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             mSoftwareFallbackUsed = true
             cancelStallWatchdog()
             releasePlayer(fastTeardown = fastTeardown)
-            startPlayer(software = true, softwareOnly = true, replaceSurface = true)
+            startPlayer(software = true, softwareOnly = true, muted = mUsingMuted, replaceSurface = true)
+        }
+
+        @UnstableApi
+        private fun fallbackToMuted() {
+            if (mDestroyed || mMutedFallbackUsed || mUsingMuted) return
+            mMutedFallbackUsed = true
+            cancelStallWatchdog()
+            releasePlayer(fastTeardown = false)
+            startPlayer(
+                software = mUsingSoftware,
+                softwareOnly = mSoftwareFallbackUsed || (media.softwareDecoder == true),
+                muted = true,
+                replaceSurface = true
+            )
         }
 
         private fun releasePlayer(fastTeardown: Boolean) {
@@ -600,17 +616,19 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             startPlayer(
                 software = software,
                 softwareOnly = (media.softwareDecoder == true),
+                muted = media.muted,
                 replaceSurface = false
             )
         }
 
         @UnstableApi
-        private fun startPlayer(software: Boolean, softwareOnly: Boolean, replaceSurface: Boolean) {
+        private fun startPlayer(software: Boolean, softwareOnly: Boolean, muted: Boolean, replaceSurface: Boolean) {
             if (mDestroyed) return
             val frame = mFrame ?: return
             val uri = media.uri
 
             mUsingSoftware = software
+            mUsingMuted = muted
 
             val textureView = if (replaceSurface || mTextureView == null) {
                 // A brand-new TextureView ensures a fresh SurfaceTexture / BufferQueue so a
@@ -647,7 +665,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 mSoftwareFallbackUsed -> "software (fallback)"
                 software -> "software (preferred)"
                 else -> "hardware (default)"
-            }} [auto=${media.softwareDecoder == null}, sdk=${Build.VERSION.SDK_INT}]")
+            }} [auto=${media.softwareDecoder == null}, muted=$muted, sdk=${Build.VERSION.SDK_INT}]")
             val renderers = DefaultRenderersFactory(context)
                 .setEnableDecoderFallback(true)
                 .setMediaCodecSelector(selector)
@@ -670,7 +688,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             mExoPlayer = player
             player.apply {
                 setVideoTextureView(textureView)
-                if (media.muted) {
+                if (muted) {
                     // no audio track at all: avoid grabbing the audio output from whatever plays
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
@@ -739,6 +757,11 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                         Log.w(LOG_TAG, "ExoPlayer error for $uri: $detail (renderer=$rendererName)", error)
 
                         val isAudioRenderer = rendererName?.contains("Audio", ignoreCase = true) == true
+                        if (!mUsingMuted && !mMutedFallbackUsed && (isAudioTrackError(error.errorCode) || isAudioRenderer)) {
+                            Log.w(LOG_TAG, "video: audio playback failed ($detail); retrying muted")
+                            post { fallbackToMuted() }
+                            return
+                        }
                         if (!isAudioRenderer && canFallbackToSoftware() && isVideoDecoderError(error.errorCode, causeName)) {
                             Log.w(LOG_TAG, "video: hardware decoder failed ($detail); falling back to software decoder")
                             post { fallbackToSoftware(fastTeardown = false) }
@@ -1586,6 +1609,17 @@ internal fun isVideoDecoderError(errorCode: Int, causeClassName: String? = null)
                 causeClassName.contains("MediaCodec", ignoreCase = true) ||
                 causeClassName.contains("Decoder", ignoreCase = true)
             )
+        else -> false
+    }
+
+/// Whether an ExoPlayer error code is an AudioTrack/AudioSink failure that can be bypassed by
+/// retrying without audio (e.g. another app holds exclusive audio output).
+internal fun isAudioTrackError(errorCode: Int): Boolean =
+    when (errorCode) {
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED -> true
         else -> false
     }
 

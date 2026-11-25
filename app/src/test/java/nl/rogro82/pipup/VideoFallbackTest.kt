@@ -46,6 +46,17 @@ class VideoFallbackTest {
     }
 
     @Test
+    fun classifiesAudioTrackErrors() {
+        assertTrue(isAudioTrackError(PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED))
+        assertTrue(isAudioTrackError(PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED))
+        assertTrue(isAudioTrackError(PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED))
+        assertTrue(isAudioTrackError(PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED))
+
+        assertFalse(isAudioTrackError(PlaybackException.ERROR_CODE_DECODING_FAILED))
+        assertFalse(isAudioTrackError(PlaybackException.ERROR_CODE_IO_UNSPECIFIED))
+    }
+
+    @Test
     fun bufferingStallTimeoutAllowsFullKeyframeIntervalPlusStartBuffer() {
         assertEquals(10_500L, hardwareBufferingStallTimeoutMs(null))
         assertEquals(10_000L, hardwareBufferingStallTimeoutMs(150))
