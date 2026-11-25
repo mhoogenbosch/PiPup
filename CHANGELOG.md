@@ -9,6 +9,23 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v1.1.0-beta.2] — 2026-11-25 (second test release: video popups over YouTube / live TV, #97)
+A **prerelease**, like beta.1. Everything from beta.1 (#95), plus #100 by @Zlate87 for #97.
+### Fixed
+- **A video popup over YouTube stayed empty on a MediaTek TV** (#97, #100 by @Zlate87; Sony BRAVIA,
+  Android 10). YouTube held the hardware decoder: PiPup's decoder started and then failed while decoding,
+  and decoder fallback only covers a decoder that fails to start. Automatic mode now switches to the
+  software decoder, on a fresh view, when the hardware decoder fails or produces no first frame (10.5 s
+  while buffering, enough for a full keyframe interval, then 3 s once ready). The software attempt starts
+  with a 500 ms buffer unless `bufferMs` is set.
+- **`softwareDecoder: true` picked the hardware decoder on that Sony**: its Android reported
+  `OMX.google.h264.decoder` as not software-only. Software decoders are now also found by name, and `true`
+  uses only those (the vendor decoder only when there is no software one for the format).
+### Changed
+- Popup windows ask for hardware acceleration explicitly (`FLAG_HARDWARE_ACCELERATED`).
+- An audio error with `muted: false` retries the popup muted; an unrecoverable video error is reported in
+  `/state.lastPopup.mediaError`.
+
 ## [v1.1.0-beta.1] — 2026-11-25 (test release for #95: wakeup, the D-pad, closing system dialogs, more media fields)
 A **prerelease**: the app's own updater skips it, and ha-pipup offers it with *Beta versions of the app*.
 Asked for by @Ltek, to control a TV with PiPup alone. Goes with ha-pipup 2.1.0b1.
@@ -1005,6 +1022,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v1.1.0-beta.2]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.1.0-beta.2
 [v1.1.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.1.0-beta.1
 [v1.0.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0
 [v1.0.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0-beta.1

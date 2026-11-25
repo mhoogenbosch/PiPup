@@ -664,8 +664,19 @@ touches the vendor hardware decoder; `false` forces the hardware decoder; absent
 Amlogic SoCs the MediaCodec decoder and the HDMI input share one video layer, and releasing the decoder when
 the popup closed **froze the HDMI picture** behind it (Xiaomi laser projector, Android 6.0.1). Software
 decoding is fine for a camera sub-stream (640×480 … 720p); a 1080p main stream may be heavy on a low-end
-projector — use the sub-stream there. Decoder fallback is on, so a failing software decoder falls through to
-hardware. `/state.lastPopup.media.softwareDecoder` echoes the requested value (`null` = automatic).
+projector — use the sub-stream there. `/state.lastPopup.media.softwareDecoder` echoes the requested value
+(`null` = automatic).
+
+Since 1.1.0 (#97, @Zlate87):
+- **`true` uses only the software decoders** (`OMX.google.*`, `c2.android.*`), found by name as well: an
+  Android 10 Sony reported `OMX.google.h264.decoder` as not software-only, so `true` still picked the
+  vendor decoder there. Only when a TV has no software decoder for the format does it use the vendor one.
+- **Automatic switches to software by itself** when the hardware decoder fails, or produces no first frame
+  (10.5 s while buffering, which allows a full keyframe interval, then 3 s once the player is ready). That
+  happens when another app holds the hardware decoder: YouTube on a MediaTek Sony, live TV on a MediaTek
+  TCL. The software attempt starts with a 500 ms buffer unless `bufferMs` is set. `false` never switches.
+- An audio error with `muted: false` retries the popup muted, and an unrecoverable video error is in
+  `/state.lastPopup.mediaError`.
 
 ```json
 { "video": { "uri": "rtsp://cam/sub", "width": 640, "softwareDecoder": true }}
