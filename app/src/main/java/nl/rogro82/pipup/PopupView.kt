@@ -28,6 +28,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
@@ -529,11 +530,16 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             // we prefer the software decoders (OMX.google.* / c2.android.*), which never
             // touch that layer. `softwareDecoder` in the payload overrides the automatic rule.
             val software = media.softwareDecoder ?: DecoderChoice.autoSoftware()
+            val selector = when {
+                media.softwareDecoder == true -> SOFTWARE_ONLY_SELECTOR
+                software -> SOFTWARE_FIRST_SELECTOR
+                else -> MediaCodecSelector.DEFAULT
+            }
             Log.i(LOG_TAG, "video decoder: ${if (software) "software (preferred)" else "hardware (default)"}" +
                 " [auto=${media.softwareDecoder == null}, sdk=${Build.VERSION.SDK_INT}]")
             val renderers = DefaultRenderersFactory(context)
                 .setEnableDecoderFallback(true)
-                .setMediaCodecSelector(if (software) SOFTWARE_FIRST_SELECTOR else MediaCodecSelector.DEFAULT)
+                .setMediaCodecSelector(selector)
 
             val builder = ExoPlayer.Builder(context, renderers)
             lowLatencyBufferDurations(media.bufferMs)?.let { (minMs, maxMs, startMs, rebufferMs) ->
@@ -594,12 +600,56 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
 
         companion object {
             /// Software decoders first, then the rest as ExoPlayer would order them; only for
-            /// video mime types (audio is disabled anyway). With decoder fallback enabled a
-            /// failing software decoder still falls through to the hardware one.
+            /// video mime types (audio is disabled anyway). Matches by name as well as
+            /// `softwareOnly` because some Android 10 OMX builds (Sony BRAVIA 4K UR2) report
+            /// `isSoftwareOnly() == false` for `OMX.google.h264.decoder` (#97).
             @UnstableApi
             val SOFTWARE_FIRST_SELECTOR = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
                 val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
-                if (MimeTypes.isVideo(mimeType)) infos.sortedBy { if (it.softwareOnly) 0 else 1 } else infos
+                if (!MimeTypes.isVideo(mimeType)) return@MediaCodecSelector infos
+                val sw = selectSoftwareDecoders(mimeType, infos, requiresSecureDecoder, requiresTunnelingDecoder)
+                sw + infos.filter { info -> sw.none { it.name == info.name } }
+            }
+
+            /// Software video decoders only (no vendor hardware decoders). Used when explicit
+            /// `softwareDecoder: true` is requested (and on fallback), so ExoPlayer's
+            /// format-support sort cannot jump back to a vendor hardware decoder on high-level
+            /// substreams (e.g. cameras declaring avc1.640033 Level 5.1 for an 896x512 stream).
+            @UnstableApi
+            val SOFTWARE_ONLY_SELECTOR = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                if (!MimeTypes.isVideo(mimeType)) return@MediaCodecSelector infos
+                if (requiresSecureDecoder || requiresTunnelingDecoder) return@MediaCodecSelector emptyList()
+                val sw = selectSoftwareDecoders(mimeType, infos, requiresSecureDecoder, requiresTunnelingDecoder)
+                Log.i(LOG_TAG, "video software selector for $mimeType: chosen=${sw.map { it.name }}")
+                sw.ifEmpty { infos }
+            }
+
+            @UnstableApi
+            private fun selectSoftwareDecoders(
+                mimeType: String,
+                listed: List<MediaCodecInfo>,
+                requiresSecureDecoder: Boolean,
+                requiresTunnelingDecoder: Boolean
+            ): List<MediaCodecInfo> {
+                val byName = listed.filter { isSoftwareVideoDecoderName(it.name) }
+                if (byName.isNotEmpty()) return byName
+                val byFlag = listed.filter { it.softwareOnly && !it.hardwareAccelerated }
+                if (byFlag.isNotEmpty()) return byFlag
+                if (requiresSecureDecoder || requiresTunnelingDecoder) return emptyList()
+                return fallbackSoftwareCodecNames(mimeType).map { codecName ->
+                    MediaCodecInfo.newInstance(
+                        codecName,
+                        mimeType,
+                        mimeType,
+                        /* capabilities= */ null,
+                        /* hardwareAccelerated= */ false,
+                        /* softwareOnly= */ true,
+                        /* vendor= */ false,
+                        /* forceDisableAdaptive= */ false,
+                        /* forceSecure= */ false
+                    )
+                }
             }
             // The automatic rule (software on Android < 8 and with an Amlogic decoder) lives in
             // DecoderChoice since 0.32.0-beta.4: decided once, off the main thread.
@@ -1319,4 +1369,26 @@ internal fun liveBadgeGravity(position: String?): Int = when (position) {
     "top_right" -> Gravity.TOP or Gravity.END
     "bottom_left" -> Gravity.BOTTOM or Gravity.START
     else -> Gravity.BOTTOM or Gravity.END
+}
+
+/// Whether a MediaCodec decoder name identifies an Android/Google software decoder.
+internal fun isSoftwareVideoDecoderName(name: String): Boolean {
+    val lower = name.lowercase(java.util.Locale.ROOT)
+    return lower.startsWith("omx.google.") ||
+        lower.startsWith("c2.android.") ||
+        lower.startsWith("c2.google.") ||
+        lower.contains(".sw.") ||
+        lower.contains(".software.")
+}
+
+/// Standard AOSP software video decoder names to try directly when a TV's media_codecs.xml
+/// omits software codecs from MediaCodecList (e.g. Sony BRAVIA 4K UR2, #97).
+internal fun fallbackSoftwareCodecNames(mimeType: String): List<String> = when (mimeType.lowercase(java.util.Locale.ROOT)) {
+    MimeTypes.VIDEO_H264 -> listOf("OMX.google.h264.decoder", "c2.android.avc.decoder")
+    MimeTypes.VIDEO_H265 -> listOf("OMX.google.hevc.decoder", "c2.android.hevc.decoder")
+    MimeTypes.VIDEO_VP9 -> listOf("OMX.google.vp9.decoder", "c2.android.vp9.decoder")
+    MimeTypes.VIDEO_VP8 -> listOf("OMX.google.vp8.decoder", "c2.android.vp8.decoder")
+    MimeTypes.VIDEO_MP4V -> listOf("OMX.google.mpeg4.decoder", "c2.android.mpeg4.decoder")
+    MimeTypes.VIDEO_MPEG2 -> listOf("OMX.google.mpeg2.decoder", "c2.android.mpeg2.decoder")
+    else -> emptyList()
 }
