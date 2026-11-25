@@ -7,7 +7,9 @@ Original app by [rogro82](https://github.com/rogro82/PiPup).
 Every version below has a [GitHub release](https://github.com/mhoogenbosch/PiPup/releases) with the
 full story (English and Dutch) and the APK.
 
-## [Unreleased — v1.0.0]
+## [Unreleased]
+
+## [v1.0.0] — 2026-11-25 (what plays, seek, click, the app in front, a picture of the screen)
 Everything from the 0.32.0 and 0.33.0 test releases (#83, #88, #89), in one release. There is no 0.32.0
 or 0.33.0 release. With these PiPup covers almost everything the Android TV (ADB) integration of Home
 Assistant offers, so it gets a new major number. **Nothing breaks:** everything new is off until you grant
@@ -986,6 +988,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v1.0.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0
 [v1.0.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0-beta.1
 [v0.33.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.33.0-beta.1
 [v0.32.0-beta.5]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.32.0-beta.5
