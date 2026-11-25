@@ -1761,7 +1761,7 @@ class PiPupService : Service(), WebServer.Handler {
                         "/power" -> powerResponse(session)
                         "/apps" -> appsResponse()
                         "/launch" -> launchResponse(session)
-                        "/key" -> controlResponse(TvControl.key(this, param(session, "key"), param(session, "package")))
+                        "/key" -> controlResponse(TvControl.key(this, param(session, "key"), param(session, "package")) { mDreaming })
                         "/click" -> clickResponse(session)
                         "/media" -> mediaResponse()
                         "/media/seek" -> controlResponse(MediaSessions.seek(this,

@@ -9,6 +9,23 @@ full story (English and Dutch) and the APK.
 
 ## [Unreleased]
 
+## [v1.1.0-beta.1] — 2026-11-25 (test release for #95: wakeup, the D-pad, closing system dialogs, more media fields)
+A **prerelease**: the app's own updater skips it, and ha-pipup offers it with *Beta versions of the app*.
+Asked for by @Ltek, to control a TV with PiPup alone. Goes with ha-pipup 2.1.0b1.
+### Added
+- **`POST /key?key=wakeup`**: the screen on and the screensaver ended, and nothing else. It does nothing
+  when the screen is already on without a screensaver, because the wake path starts an activity that can
+  pause the app on screen. The answer has `woke`, `screenOn` and `dreaming`; a screen that stays off is for
+  the caller to wake over adb.
+- **The D-pad and OK**: `key=up|down|left|right|ok`, as accessibility global actions. Android offers these
+  from Android 13; they need one of PiPup's accessibility services. Below Android 13 they answer 501.
+- **`key=close_dialogs`**: `ACTION_CLOSE_SYSTEM_DIALOGS`, up to Android 11. From Android 12 only the system
+  may send it (an app gets a SecurityException), so it answers 501 there and adb has to do it.
+- **More media fields** in `/media` and `/state.media`: `subtitle`, `description`, `albumArtist`,
+  `discNumber` and `trackNumber`, as the app gives them, so a controller can find a series, season and
+  episode. A change in them is pushed like a change of title.
+- `/state.control.keys` lists the new names where they work on that device.
+
 ## [v1.0.0] — 2026-11-25 (what plays, seek, click, the app in front, a picture of the screen)
 Everything from the 0.32.0 and 0.33.0 test releases (#83, #88, #89), in one release. There is no 0.32.0
 or 0.33.0 release. With these PiPup covers almost everything the Android TV (ADB) integration of Home
@@ -988,6 +1005,7 @@ outside, plus the endpoint to see them.
 - The first fork releases: `/state` endpoint with popup visibility and screen state, a popup counter,
   the dismiss watchdog (`watchdogCleanups`), and the groundwork the later versions build on.
 
+[v1.1.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.1.0-beta.1
 [v1.0.0]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0
 [v1.0.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v1.0.0-beta.1
 [v0.33.0-beta.1]: https://github.com/mhoogenbosch/PiPup/releases/tag/v0.33.0-beta.1

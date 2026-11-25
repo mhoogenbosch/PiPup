@@ -999,7 +999,7 @@ this device cannot do it, 400 for a malformed request.
 |---|---|---|
 | `/apps` | GET | — answers `{"apps": [{"package", "label", "tv"}]}`, sorted by label (`tv` = has a TV launcher entry) |
 | `/launch` | POST | `package=<name>` and/or `uri=<deep link>`; `wake=false` to leave a sleeping screen off |
-| `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back`; optionally `package=` for a media key (1.0.0) |
+| `/key` | POST | `key=play_pause\|play\|pause\|stop\|next\|previous\|rewind\|fast_forward\|home\|back`; optionally `package=` for a media key (1.0.0). Since 1.1.0 also `wakeup`, `up\|down\|left\|right\|ok` (Android 13+) and `close_dialogs` (up to Android 11) |
 | `/volume` | GET / POST | one of `level=0-100`, `step=up\|down`, `mute=on\|off\|toggle`; `ui=false` hides the volume bar |
 | `/click` | POST | `package=<name>`, `id=<resource id>`, `wait=<0-30 s>`, `method=click\|tap\|ok` — see [Pressing a button in an app](#pressing-a-button-in-an-app) (1.0.0) |
 | `/media` | GET | what is playing, in any app — see [Media sessions](#media-sessions) (1.0.0) |
@@ -1026,6 +1026,18 @@ curl -X POST "http://tv:7979/volume?level=30"
   app without a media session ignores both.
 - **Home and back** need the accessibility service (`install.sh --accessibility`); without it they answer
   501 and are left out of `/state.control.keys`.
+- **`wakeup`** (1.1.0) turns the screen on and ends the screensaver, and does nothing when the screen is
+  already on without one: waking starts an activity, which can pause the app on screen. The answer has
+  `woke`, `screenOn` and `dreaming`; when the screen stays off (a TCL in deep sleep), wake it over adb
+  (`KEYCODE_WAKEUP`). ha-pipup does that for you.
+- **The D-pad and OK** (`up`, `down`, `left`, `right`, `ok`, 1.1.0) are accessibility global actions, which
+  Android offers from Android 13. They need one of PiPup's accessibility services (`--accessibility` or
+  `--click`). Below Android 13 an app cannot press them: they answer 501, and only adb can
+  (`input keyevent KEYCODE_DPAD_UP`, …).
+- **`close_dialogs`** (1.1.0) sends `ACTION_CLOSE_SYSTEM_DIALOGS`, which closes system dialogs such as the
+  notification panel. Up to Android 11 any app may; from Android 12 only the system may, so it answers 501
+  there and adb has to do it (`am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS`).
+- `/state.control.keys` lists the names this device can send right now.
 - **Volume** is the media stream (`STREAM_MUSIC`). On a box whose volume belongs to the TV set or an
   amplifier over HDMI-CEC, `/state.volume.fixed` is `true`: `level=` then answers 501, while `step` and
   `mute` are passed on and the platform forwards them over CEC where it can. A volume change, also one
@@ -1134,7 +1146,12 @@ curl -X POST "http://tv:7979/media/seek?by=-10000"      # back 10 seconds
   "album": null,
   "canSeek": true,
   "actions": ["play", "pause", "stop", "seek"],
-  "artKey": "5f2c81d0"
+  "artKey": "5f2c81d0",
+  "subtitle": null,
+  "description": null,
+  "albumArtist": null,
+  "discNumber": null,
+  "trackNumber": null
 }
 ```
 
@@ -1157,6 +1174,9 @@ curl -X POST "http://tv:7979/media/seek?by=-10000"      # back 10 seconds
   returns that artwork as JPEG (PNG when it has transparency), at most 600 px on its longest side, with
   the same key in the `X-PiPup-Art-Key` header; **404** without artwork. PiPup fetches artwork that the app
   only gives as a link itself, and never hands out the link (a media server's link can carry its token).
+- `subtitle`, `description`, `albumArtist`, `discNumber` and `trackNumber` (1.1.0) are passed on as the app
+  gives them (`null` when it gives none). Android has no fields for a series, season or episode; apps that
+  publish them use these, each in its own way.
 
 Android hands media sessions to an app with an enabled notification listener. PiPup's listener only
 exists for that grant and reads no notifications. Give it once over adb (`install.sh --media`):

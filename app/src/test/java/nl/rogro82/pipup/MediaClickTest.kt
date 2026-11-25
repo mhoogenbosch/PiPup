@@ -79,7 +79,8 @@ class MediaClickTest {
         val map = MediaSessions.Snapshot("com.app", "paused", 1_000, 1_762_358_400_000, 0, 2_000, 0.0,
             "T", "A", "B", true).toMap()
         assertEquals(listOf("package", "state", "positionMs", "positionUpdatedAt", "durationMs", "speed",
-            "title", "artist", "album", "canSeek", "actions", "artKey"), map.keys.toList())
+            "title", "artist", "album", "canSeek", "actions", "artKey", "subtitle", "description", "albumArtist",
+            "discNumber", "trackNumber"), map.keys.toList())
         assertEquals("2025-11-05T16:00:00Z", map["positionUpdatedAt"])
     }
 
@@ -153,6 +154,17 @@ class MediaClickTest {
         assertTrue(key != artKeyOf(fields.dropLast(1) + "634000", source, listOf(1, 2, 3)))
         // a link: no samples, the link itself tells pictures apart
         assertTrue(artKeyOf(fields, "http://plex/a.jpg", emptyList()) != artKeyOf(fields, "http://plex/b.jpg", emptyList()))
+    }
+
+    @Test
+    fun anotherEpisodeIsPushed() {
+        // 1.1.0 (#95): an app may keep the title (the show) and change only the numbers
+        val before = snap().copy(subtitle = "S1", discNumber = 1, trackNumber = 4)
+        assertFalse(MediaSessions.worthPushing(before, before.copy(positionMs = 65_000, atElapsedMs = 15_000)))
+        assertTrue(MediaSessions.worthPushing(before, before.copy(trackNumber = 5)))
+        assertTrue(MediaSessions.worthPushing(before, before.copy(discNumber = 2)))
+        assertTrue(MediaSessions.worthPushing(before, before.copy(subtitle = "S2")))
+        assertTrue(MediaSessions.worthPushing(before, before.copy(albumArtist = "Show")))
     }
 
     @Test
