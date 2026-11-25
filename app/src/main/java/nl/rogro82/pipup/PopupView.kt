@@ -21,13 +21,17 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import android.os.Build
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
@@ -479,8 +483,100 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     private class Video(context: Context, popup: PopupProps, val media: PopupProps.Media.Video): PopupView(context, popup) {
         private var mExoPlayer: ExoPlayer? = null
         private var mTextureView: TextureView? = null
+        private var mFrame: FrameLayout? = null
+        private var mDestroyed = false
+        private var mFirstFrameSeen = false
+        private var mUsingSoftware = false
+        private var mUsingMuted = media.muted
+        private var mSoftwareFallbackUsed = false
+        private var mMutedFallbackUsed = false
+        private var mStallTimeout: Runnable? = null
+        private var mStallDeadlineMs: Long = Long.MAX_VALUE
+        private var mCurrentWidth: Int = media.width
+        private var mCurrentHeight: Int = provisionalVideoHeight(media.width, media.height)
 
         init { create() }
+
+        private fun sizeTo(w: Int, h: Int) {
+            mCurrentWidth = w
+            mCurrentHeight = h
+            mTextureView?.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
+            mPoster?.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
+            this@Video.visibility = View.VISIBLE
+        }
+
+        private fun canFallbackToSoftware(): Boolean =
+            !mDestroyed && !mFirstFrameSeen && !mUsingSoftware && !mSoftwareFallbackUsed && media.softwareDecoder == null
+
+        private fun cancelStallWatchdog() {
+            mStallTimeout?.let { removeCallbacks(it) }
+            mStallTimeout = null
+            mStallDeadlineMs = Long.MAX_VALUE
+        }
+
+        /// Arm (or tighten) a watchdog that switches from a stalled hardware decoder to software
+        /// decoding if no first frame arrives in time (#97). During buffering it allows a full
+        /// keyframe interval plus start buffer; once STATE_READY is reached (keyframe and start
+        /// buffer already arrived), it tightens to [HARDWARE_READY_STALL_MS].
+        @UnstableApi
+        private fun armStallWatchdog(delayMs: Long, reason: String) {
+            if (!canFallbackToSoftware()) return
+            val deadline = SystemClock.elapsedRealtime() + delayMs
+            if (mStallTimeout != null && deadline >= mStallDeadlineMs) return
+            cancelStallWatchdog()
+            mStallDeadlineMs = deadline
+            val task = Runnable {
+                mStallTimeout = null
+                mStallDeadlineMs = Long.MAX_VALUE
+                if (!canFallbackToSoftware()) return@Runnable
+                val tv = mTextureView
+                Log.w(LOG_TAG, "video: $reason (surfaceAvailable=${tv?.isAvailable}, hwAccel=${tv?.isHardwareAccelerated}); falling back to software decoder")
+                fallbackToSoftware(fastTeardown = true)
+            }
+            mStallTimeout = task
+            postDelayed(task, delayMs)
+        }
+
+        @UnstableApi
+        private fun fallbackToSoftware(fastTeardown: Boolean) {
+            if (mDestroyed || mSoftwareFallbackUsed) return
+            mSoftwareFallbackUsed = true
+            cancelStallWatchdog()
+            releasePlayer(fastTeardown = fastTeardown)
+            startPlayer(software = true, softwareOnly = true, muted = mUsingMuted, replaceSurface = true)
+        }
+
+        @UnstableApi
+        private fun fallbackToMuted() {
+            if (mDestroyed || mMutedFallbackUsed || mUsingMuted) return
+            mMutedFallbackUsed = true
+            cancelStallWatchdog()
+            releasePlayer(fastTeardown = false)
+            startPlayer(
+                software = mUsingSoftware,
+                softwareOnly = mSoftwareFallbackUsed || (media.softwareDecoder == true),
+                muted = true,
+                replaceSurface = true
+            )
+        }
+
+        private fun releasePlayer(fastTeardown: Boolean) {
+            val player = mExoPlayer ?: return
+            mExoPlayer = null
+            // Orderly teardown: stop decoding, detach the output surface, then release. A bare
+            // release() lets the decoder die while still bound to the surface, which is the
+            // moment a vendor pipeline (Amlogic) lost sync with the HDMI input. When tearing
+            // down a stalled hardware codec before replacing the TextureView, skip the blocking
+            // surface-detach message so a hung OMX codec does not stall the main thread.
+            try {
+                runCatching { player.stop() }
+                if (!fastTeardown) {
+                    mTextureView?.let { tv -> runCatching { player.clearVideoTextureView(tv) } }
+                }
+                player.release()
+            } catch (_: Throwable) {
+            }
+        }
 
         @UnstableApi
         override fun create() {
@@ -489,7 +585,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             visibility = View.INVISIBLE
 
             val frame = findViewById<FrameLayout>(R.id.popup_frame)
-            val uri = media.uri
+            mFrame = frame
 
             val textureView = TextureView(context)
             mTextureView = textureView
@@ -499,11 +595,6 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             // re-centre it. Provisional 16:9 and visible right away so the SurfaceTexture exists
             // before the first frame (a 0-height view never gets one); corrected to the true
             // aspect on onVideoSizeChanged.
-            fun sizeTo(w: Int, h: Int) {
-                textureView.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
-                mPoster?.layoutParams = FrameLayout.LayoutParams(w, h).apply { gravity = Gravity.CENTER }
-                this@Video.visibility = View.VISIBLE
-            }
             frame.addView(textureView)
             val provisionalHeight = provisionalVideoHeight(media.width, media.height)
             attachPoster(frame, media.poster,
@@ -514,13 +605,6 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             }
             sizeTo(media.width, provisionalHeight)
 
-            val isRtsp = uri.startsWith("rtsp://", ignoreCase = true) || uri.startsWith("rtsps://", ignoreCase = true)
-            val item = MediaItem.fromUri(uri)
-            val source = if (isRtsp)
-                RtspMediaSource.Factory().setForceUseRtpTcp(true).createMediaSource(item)
-            else
-                DefaultMediaSourceFactory(context).createMediaSource(item)
-
             // Decoder choice (0.17.2). The vendor hardware decoder is the default everywhere,
             // except where it is known to break the TV's own video: on Amlogic SoCs the
             // MediaCodec decoder and the HDMI input share one video layer, and releasing our
@@ -529,14 +613,68 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             // we prefer the software decoders (OMX.google.* / c2.android.*), which never
             // touch that layer. `softwareDecoder` in the payload overrides the automatic rule.
             val software = media.softwareDecoder ?: DecoderChoice.autoSoftware()
-            Log.i(LOG_TAG, "video decoder: ${if (software) "software (preferred)" else "hardware (default)"}" +
-                " [auto=${media.softwareDecoder == null}, sdk=${Build.VERSION.SDK_INT}]")
+            startPlayer(
+                software = software,
+                softwareOnly = (media.softwareDecoder == true),
+                muted = media.muted,
+                replaceSurface = false
+            )
+        }
+
+        @UnstableApi
+        private fun startPlayer(software: Boolean, softwareOnly: Boolean, muted: Boolean, replaceSurface: Boolean) {
+            if (mDestroyed) return
+            val frame = mFrame ?: return
+            val uri = media.uri
+
+            mUsingSoftware = software
+            mUsingMuted = muted
+
+            val textureView = if (replaceSurface || mTextureView == null) {
+                // A brand-new TextureView ensures a fresh SurfaceTexture / BufferQueue so a
+                // failed or hung hardware MediaCodec cannot leave the surface connected.
+                val oldTv = mTextureView
+                val newTv = TextureView(context)
+                val lp = FrameLayout.LayoutParams(mCurrentWidth, mCurrentHeight).apply { gravity = Gravity.CENTER }
+                if (oldTv != null && oldTv.parent === frame) {
+                    val idx = frame.indexOfChild(oldTv)
+                    frame.removeViewAt(idx)
+                    frame.addView(newTv, idx, lp)
+                } else {
+                    frame.addView(newTv, 0, lp)
+                }
+                mTextureView = newTv
+                newTv
+            } else {
+                mTextureView!!
+            }
+
+            val isRtsp = uri.startsWith("rtsp://", ignoreCase = true) || uri.startsWith("rtsps://", ignoreCase = true)
+            val item = MediaItem.fromUri(uri)
+            val source = if (isRtsp)
+                RtspMediaSource.Factory().setForceUseRtpTcp(true).createMediaSource(item)
+            else
+                DefaultMediaSourceFactory(context).createMediaSource(item)
+
+            val selector = when {
+                softwareOnly -> SOFTWARE_ONLY_SELECTOR
+                software -> SOFTWARE_FIRST_SELECTOR
+                else -> MediaCodecSelector.DEFAULT
+            }
+            Log.i(LOG_TAG, "video decoder: ${when {
+                mSoftwareFallbackUsed -> "software (fallback)"
+                software -> "software (preferred)"
+                else -> "hardware (default)"
+            }} [auto=${media.softwareDecoder == null}, muted=$muted, sdk=${Build.VERSION.SDK_INT}]")
             val renderers = DefaultRenderersFactory(context)
                 .setEnableDecoderFallback(true)
-                .setMediaCodecSelector(if (software) SOFTWARE_FIRST_SELECTOR else MediaCodecSelector.DEFAULT)
+                .setMediaCodecSelector(selector)
 
             val builder = ExoPlayer.Builder(context, renderers)
-            lowLatencyBufferDurations(media.bufferMs)?.let { (minMs, maxMs, startMs, rebufferMs) ->
+            // After a failed/stalled hardware attempt, the popup has already spent time waiting;
+            // trim ExoPlayer's 2.5 s default start buffer to 500 ms unless the caller set bufferMs.
+            val effectiveBufferMs = media.bufferMs ?: if (mSoftwareFallbackUsed) FALLBACK_BUFFER_MS else null
+            lowLatencyBufferDurations(effectiveBufferMs)?.let { (minMs, maxMs, startMs, rebufferMs) ->
                 builder.setLoadControl(
                     DefaultLoadControl.Builder()
                         .setBufferDurationsMs(minMs, maxMs, startMs, rebufferMs)
@@ -545,26 +683,91 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 )
                 Log.i(LOG_TAG, "video: low-latency buffer, start ${startMs} ms")
             }
-            mExoPlayer = builder.build().apply {
+
+            val player = builder.build()
+            mExoPlayer = player
+            player.apply {
                 setVideoTextureView(textureView)
-                if (media.muted) {
+                if (muted) {
                     // no audio track at all: avoid grabbing the audio output from whatever plays
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
                         .build()
                 }
+                addAnalyticsListener(object : AnalyticsListener {
+                    override fun onVideoDecoderInitialized(
+                        eventTime: AnalyticsListener.EventTime,
+                        decoderName: String,
+                        initializedTimestampMs: Long,
+                        initializationDurationMs: Long
+                    ) {
+                        if (mDestroyed || mExoPlayer !== player) return
+                        val sw = isSoftwareVideoDecoderName(decoderName)
+                        Log.i(LOG_TAG, "video decoder initialized: $decoderName (${initializationDurationMs} ms, sw=$sw)")
+                        if (sw) {
+                            mUsingSoftware = true
+                            cancelStallWatchdog()
+                        } else {
+                            armStallWatchdog(
+                                hardwareBufferingStallTimeoutMs(media.bufferMs),
+                                "hardware decoder $decoderName produced no first frame"
+                            )
+                        }
+                    }
+                })
                 addListener(object : Player.Listener {
+                    override fun onTracksChanged(tracks: Tracks) {
+                        if (mDestroyed || mExoPlayer !== player) return
+                        if (tracks.containsType(C.TRACK_TYPE_VIDEO)) {
+                            armStallWatchdog(
+                                hardwareBufferingStallTimeoutMs(media.bufferMs),
+                                "hardware decoder stalled after video track was selected"
+                            )
+                        }
+                    }
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (mDestroyed || mExoPlayer !== player) return
+                        if (playbackState == Player.STATE_READY && !mFirstFrameSeen) {
+                            armStallWatchdog(
+                                HARDWARE_READY_STALL_MS,
+                                "hardware decoder rendered no frame after reaching STATE_READY"
+                            )
+                        }
+                    }
                     override fun onVideoSizeChanged(videoSize: VideoSize) {
+                        if (mDestroyed || mExoPlayer !== player) return
                         if (videoSize.width > 0 && videoSize.height > 0) {
                             sizeTo(media.width, heightForDisplayAspect(
                                 media.width, videoSize.width, videoSize.height, videoSize.pixelWidthHeightRatio))
                         }
                     }
                     override fun onRenderedFirstFrame() {
+                        if (mDestroyed || mExoPlayer !== player) return
+                        mFirstFrameSeen = true
+                        cancelStallWatchdog()
                         onStreamFirstFrame()
                     }
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.w(LOG_TAG, "ExoPlayer error for $uri: ${error.errorCodeName}", error)
+                        if (mDestroyed || mExoPlayer !== player) return
+                        cancelStallWatchdog()
+                        val exo = error as? ExoPlaybackException
+                        val rendererName = exo?.rendererName
+                        val causeName = error.cause?.javaClass?.name
+                        val detail = formatVideoError(error.errorCodeName, error.cause?.message ?: error.message)
+                        Log.w(LOG_TAG, "ExoPlayer error for $uri: $detail (renderer=$rendererName)", error)
+
+                        val isAudioRenderer = rendererName?.contains("Audio", ignoreCase = true) == true
+                        if (!mUsingMuted && !mMutedFallbackUsed && (isAudioTrackError(error.errorCode) || isAudioRenderer)) {
+                            Log.w(LOG_TAG, "video: audio playback failed ($detail); retrying muted")
+                            post { fallbackToMuted() }
+                            return
+                        }
+                        if (!isAudioRenderer && canFallbackToSoftware() && isVideoDecoderError(error.errorCode, causeName)) {
+                            Log.w(LOG_TAG, "video: hardware decoder failed ($detail); falling back to software decoder")
+                            post { fallbackToSoftware(fastTeardown = false) }
+                            return
+                        }
+                        try { onMediaError?.invoke(detail) } catch (_: Throwable) {}
                     }
                 })
                 setMediaSource(source)
@@ -574,33 +777,78 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         }
 
         override fun destroy() {
+            mDestroyed = true
+            cancelStallWatchdog()
             super.destroy()
             destroyPoster()
-            // Orderly teardown: stop decoding, detach the output surface, then release. A bare
-            // release() lets the decoder die while still bound to the surface, which is the
-            // moment a vendor pipeline (Amlogic) lost sync with the HDMI input.
-            try {
-                mExoPlayer?.let { player ->
-                    runCatching { player.stop() }
-                    mTextureView?.let { tv -> runCatching { player.clearVideoTextureView(tv) } }
-                    player.release()
-                }
-            } catch(e: Throwable) {
-            } finally {
-                mExoPlayer = null
-                mTextureView = null
-            }
+            releasePlayer(fastTeardown = false)
+            mTextureView = null
+            mFrame = null
         }
 
         companion object {
             /// Software decoders first, then the rest as ExoPlayer would order them; only for
-            /// video mime types (audio is disabled anyway). With decoder fallback enabled a
-            /// failing software decoder still falls through to the hardware one.
+            /// video mime types (audio is disabled anyway). Matches by name as well as
+            /// `softwareOnly` because some Android 10 OMX builds (Sony BRAVIA 4K UR2) report
+            /// `isSoftwareOnly() == false` for `OMX.google.h264.decoder` (#97).
             @UnstableApi
             val SOFTWARE_FIRST_SELECTOR = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
                 val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
-                if (MimeTypes.isVideo(mimeType)) infos.sortedBy { if (it.softwareOnly) 0 else 1 } else infos
+                if (!MimeTypes.isVideo(mimeType)) return@MediaCodecSelector infos
+                val sw = selectSoftwareDecoders(mimeType, infos, requiresSecureDecoder, requiresTunnelingDecoder)
+                sw + infos.filter { info -> sw.none { it.name == info.name } }
             }
+
+            /// Software video decoders only (no vendor hardware decoders). Used when explicit
+            /// `softwareDecoder: true` is requested (and on fallback), so ExoPlayer's
+            /// format-support sort cannot jump back to a vendor hardware decoder on high-level
+            /// substreams (e.g. cameras declaring avc1.640033 Level 5.1 for an 896x512 stream).
+            @UnstableApi
+            val SOFTWARE_ONLY_SELECTOR = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                if (!MimeTypes.isVideo(mimeType)) return@MediaCodecSelector infos
+                if (requiresSecureDecoder || requiresTunnelingDecoder) return@MediaCodecSelector emptyList()
+                val sw = selectSoftwareDecoders(mimeType, infos, requiresSecureDecoder, requiresTunnelingDecoder)
+                Log.i(LOG_TAG, "video software selector for $mimeType: chosen=${sw.map { it.name }}")
+                sw.ifEmpty { infos }
+            }
+
+            @UnstableApi
+            private fun selectSoftwareDecoders(
+                mimeType: String,
+                listed: List<MediaCodecInfo>,
+                requiresSecureDecoder: Boolean,
+                requiresTunnelingDecoder: Boolean
+            ): List<MediaCodecInfo> {
+                val byName = listed.filter { isSoftwareVideoDecoderName(it.name) }
+                if (byName.isNotEmpty()) return byName
+                val byFlag = listed.filter { it.softwareOnly && !it.hardwareAccelerated }
+                if (byFlag.isNotEmpty()) return byFlag
+                if (requiresSecureDecoder || requiresTunnelingDecoder) return emptyList()
+                return fallbackSoftwareCodecNames(mimeType).map { codecName ->
+                    MediaCodecInfo.newInstance(
+                        codecName,
+                        mimeType,
+                        mimeType,
+                        /* capabilities= */ null,
+                        /* hardwareAccelerated= */ false,
+                        /* softwareOnly= */ true,
+                        /* vendor= */ false,
+                        /* forceDisableAdaptive= */ false,
+                        /* forceSecure= */ false
+                    )
+                }
+            }
+            /// Once ExoPlayer has received a keyframe, buffered, and reached STATE_READY, a
+            /// healthy hardware decoder renders its first frame promptly; 3 s without a frame
+            /// indicates a stalled vendor VPU (#97).
+            const val HARDWARE_READY_STALL_MS = 3_000L
+
+            /// Start buffer used on automatic software fallback when the caller left `bufferMs`
+            /// unset: trims 2 s off ExoPlayer's 2.5 s default so playback starts quickly after
+            /// the failed hardware attempt.
+            const val FALLBACK_BUFFER_MS = 500
+
             // The automatic rule (software on Android < 8 and with an Amlogic decoder) lives in
             // DecoderChoice since 0.32.0-beta.4: decided once, off the main thread.
         }
@@ -1319,4 +1567,74 @@ internal fun liveBadgeGravity(position: String?): Int = when (position) {
     "top_right" -> Gravity.TOP or Gravity.END
     "bottom_left" -> Gravity.BOTTOM or Gravity.START
     else -> Gravity.BOTTOM or Gravity.END
+}
+
+/// Whether a MediaCodec decoder name identifies an Android/Google software decoder.
+internal fun isSoftwareVideoDecoderName(name: String): Boolean {
+    val lower = name.lowercase(java.util.Locale.ROOT)
+    return lower.startsWith("omx.google.") ||
+        lower.startsWith("c2.android.") ||
+        lower.startsWith("c2.google.") ||
+        lower.contains(".sw.") ||
+        lower.contains(".software.")
+}
+
+/// Standard AOSP software video decoder names to try directly when a TV's media_codecs.xml
+/// omits software codecs from MediaCodecList (e.g. Sony BRAVIA 4K UR2, #97).
+internal fun fallbackSoftwareCodecNames(mimeType: String): List<String> = when (mimeType.lowercase(java.util.Locale.ROOT)) {
+    MimeTypes.VIDEO_H264 -> listOf("OMX.google.h264.decoder", "c2.android.avc.decoder")
+    MimeTypes.VIDEO_H265 -> listOf("OMX.google.hevc.decoder", "c2.android.hevc.decoder")
+    MimeTypes.VIDEO_VP9 -> listOf("OMX.google.vp9.decoder", "c2.android.vp9.decoder")
+    MimeTypes.VIDEO_VP8 -> listOf("OMX.google.vp8.decoder", "c2.android.vp8.decoder")
+    MimeTypes.VIDEO_MP4V -> listOf("OMX.google.mpeg4.decoder", "c2.android.mpeg4.decoder")
+    MimeTypes.VIDEO_MPEG2 -> listOf("OMX.google.mpeg2.decoder", "c2.android.mpeg2.decoder")
+    else -> emptyList()
+}
+
+/// Whether an ExoPlayer error code (and optional cause class name) is a video decoder failure
+/// that should trigger automatic fallback to software decoding (#97).
+internal fun isVideoDecoderError(errorCode: Int, causeClassName: String? = null): Boolean =
+    when (errorCode) {
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED,
+        PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED,
+        PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED -> true
+        PlaybackException.ERROR_CODE_TIMEOUT,
+        PlaybackException.ERROR_CODE_UNSPECIFIED ->
+            causeClassName != null && (
+                causeClassName.contains("MediaCodec", ignoreCase = true) ||
+                causeClassName.contains("Decoder", ignoreCase = true)
+            )
+        else -> false
+    }
+
+/// Whether an ExoPlayer error code is an AudioTrack/AudioSink failure that can be bypassed by
+/// retrying without audio (e.g. another app holds exclusive audio output).
+internal fun isAudioTrackError(errorCode: Int): Boolean =
+    when (errorCode) {
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED -> true
+        else -> false
+    }
+
+/// Maximum wait during buffering before treating a hardware decoder as stalled (#97).
+/// Allows a full keyframe interval (8 s, covering cameras such as Reolink with 4x GOP)
+/// plus the configured start buffer, so a healthy hardware decoder on a slow-GOP stream
+/// never falsely falls back to CPU decoding.
+internal fun hardwareBufferingStallTimeoutMs(bufferMs: Int?): Long {
+    val startBuffer = lowLatencyBufferDurations(bufferMs)?.get(2)?.toLong() ?: 2_500L
+    return maxOf(10_000L, startBuffer + 8_000L)
+}
+
+/// Concise error string for /state.lastPopup.mediaError (capped at 120 chars like WHEP errors).
+internal fun formatVideoError(errorCodeName: String, causeMessage: String?): String {
+    val detail = causeMessage?.trim()?.takeIf { it.isNotEmpty() && !it.equals(errorCodeName, ignoreCase = true) }
+    val raw = if (detail != null) "$errorCodeName: $detail" else errorCodeName
+    return raw.take(120)
 }
