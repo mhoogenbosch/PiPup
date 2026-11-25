@@ -892,7 +892,7 @@ class PiPupService : Service(), WebServer.Handler {
             else -> WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
         }
 
-        val windowFlags = if (popup.buttons.isNotEmpty())
+        val baseWindowFlags = if (popup.buttons.isNotEmpty())
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         else {
             // A button-less popup must never take input. On Android < 8 the overlay is a
@@ -906,6 +906,10 @@ class PiPupService : Service(), WebServer.Handler {
                 f = f or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             f
         }
+        // Service overlay windows bypass PhoneWindow and do not automatically inherit the
+        // manifest's hardwareAccelerated flag; TextureView (video popups) requires HWUI to
+        // allocate a SurfaceTexture and render frames (#97).
+        val windowFlags = baseWindowFlags or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         if (popup.coversScreen) return fullscreenParams(layoutFlags, windowFlags, key)
 
